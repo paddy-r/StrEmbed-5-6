@@ -37,6 +37,10 @@ HR 11/08/20 onwards
 Version 5.5
 """
 
+''' HR 02/12/20
+Version 5.6 '''
+
+import sys
 
 # WX stuff
 import wx
@@ -66,7 +70,7 @@ import re
 import os.path
 
 import shutil
-import nltk
+# import nltk
 
 # For timings
 import time
@@ -82,7 +86,7 @@ except:
     pass
 
 # For STEP import
-from step_parse_5_5 import StepParse
+from step_parse_5_6 import StepParse, AssemblyManager
 
 # import matplotlib.pyplot as plt
 import numpy as np
@@ -96,6 +100,8 @@ from OCC.Display import OCCViewer
 # from OCC.Display import wxDisplay
 from OCC.Core.Quantity import (Quantity_Color, Quantity_NOC_WHITE, Quantity_TOC_RGB)
 from OCC.Core.AIS import AIS_Shaded, AIS_WireFrame
+
+
 
 
 
@@ -122,13 +128,6 @@ def CreateBitmap(imgName, mask = wx.WHITE, size = None):
     return _bmp
 
 
-
-''' To add some GUI-specific bits and bobs '''
-class MyParse(StepParse):
-
-    def __init__(self, _id = None, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self._id = _id
 
 
 
@@ -211,6 +210,8 @@ class MyTree(ctc.CustomTreeCtrl):
 
 
 
+
+
 """
 HR 26/08/2020
 ShapeRenderer, wxBaseViewer and wxViewer3D both adapted from pythonocc script "wxDisplay"
@@ -249,6 +250,8 @@ class ShapeRenderer(OCCViewer.Viewer3d):
         # self.display_triedron()
 
         self._rendered = False
+
+
 
 
 
@@ -345,6 +348,8 @@ class wxBaseViewer(wx.Panel):
 
     def OnKeyDown(self, event):
         pass
+
+
 
 
 
@@ -530,6 +535,8 @@ class wxViewer3d(wxBaseViewer):
 
 
 
+
+
 ''' Class to veto unsplit when sash is double-clicked '''
 class MySplitter(wx.SplitterWindow):
     def __init__(self, parent):
@@ -539,6 +546,8 @@ class MySplitter(wx.SplitterWindow):
 
     def OnSashDoubleClick(self, event):
         event.Veto()
+
+
 
 
 
@@ -616,7 +625,7 @@ class NotebookPanel(wx.Panel):
 
         ## Discard pile and alternative assembly
         # self.discarded = StepParse()
-        self.alt = StepParse()
+        self.alt = StepParse(1000)
 
         self.edge_alt_dict = {}
         self.node_alt_dict = {}
@@ -644,10 +653,11 @@ class NotebookPanel(wx.Panel):
 
 
 
+
 class MainWindow(wx.Frame):
     def __init__(self):
 
-        super().__init__(parent = None, title = "StrEmbed-5-5")
+        super().__init__(parent = None, title = "StrEmbed-5-6")
 
         ''' All other app-wide initialisation '''
         self.SetBackgroundColour('white')
@@ -674,17 +684,11 @@ class MainWindow(wx.Frame):
 
         self._highlight_colour = wx.RED
 
-        ''' OBJECT FOR ASSEMBLY MANAGEMENT '''
-        self.assembly_manager = {}
-        # self.assembly_id = 0
+        ''' OBJECTS FOR ASSEMBLY MANAGEMENT '''
+        self._notebook_manager = {}
+        self._assembly_manager = AssemblyManager()
 
         # Themes for assembly suggestions in "Assistant"
-        # self.themes = ['Group items by similar names',
-        #                'Group items by material',
-        #                'Group by part dimensions',
-        #                'Create maintenance bill',
-        #                'Create manufacturing bill,
-        #                Create transport bill']
         self.themes = ['Create maintenance bill',
                        'Create manufacturing bill',
                        'Create transport bill']
@@ -949,10 +953,10 @@ class MainWindow(wx.Frame):
         print(_name1)
         print(_name2)
 
-        a1 = [el for el in self.assembly_manager if el.name == _name1][0]
-        a1 = self.assembly_manager[a1]
-        a2 = [el for el in self.assembly_manager if el.name == _name2][0]
-        a2 = self.assembly_manager[a2]
+        p1 = [el for el in self._notebook_manager if el.name == _name1][0]
+        a1 = self._assembly_manager._mgr[self._notebook_manager[p1]]
+        p2 = [el for el in self._notebook_manager if el.name == _name2][0]
+        a2 = self._assembly_manager._mgr[self._notebook_manager[p2]]
 
         return a1, a2
 
@@ -1043,6 +1047,18 @@ class MainWindow(wx.Frame):
 
 
 
+    @property
+    def assembly_list(self):
+        try:
+            _list = [el.name for el in self._notebook_manager]
+        except:
+            print('Exception while trying to populate assembly list; returning empty list')
+            _list = []
+
+        return _list
+
+
+
     def OnRibbonTabChanging(self, event = None):
         print('Ribbon tab changing')
 
@@ -1101,7 +1117,7 @@ class MainWindow(wx.Frame):
                 _new_name = _new_name_corr
                 print('Special characters removed')
             # Check new name not in existing names (excluding current)
-            _names = [el.name for el in self.assembly_manager]
+            _names = [el.name for el in self._notebook_manager]
             _names.remove(_old_name)
             if _new_name not in _names:
                 print('New name not in existing names')
@@ -1130,25 +1146,13 @@ class MainWindow(wx.Frame):
 
         # Delete notebook page, correponding assembly object and dictionary entry
         self._notebook.DeletePage(_selection)
-        _assembly = self.assembly_manager[_page]
-        del self.assembly_manager[_page]
-        del _assembly
+        _id = self._notebook_manager[_page]
 
+        self._assembly_manager.remove_assembly(_id)
+        self._notebook_manager.pop(_page)
         self.AddText('Assembly deleted')
 
         # _dialog = self.DoNothingDialog(event = None, text= '6 issues found in 2 assemblies', message = 'Change report')
-
-
-
-    @property
-    def assembly_list(self):
-        try:
-            _list = [el.name for el in self.assembly_manager]
-        except:
-            print('Exception while trying to populate assembly list')
-            _list = []
-
-        return _list
 
 
 
@@ -1199,11 +1203,19 @@ class MainWindow(wx.Frame):
 
         # Wipe existing assembly if one already loaded; replace with empty one
         if self._active.file_open:
+            ''' Get active page and assembly ID '''
             _page = self._notebook.GetPage(self._notebook.GetSelection())
-            _old = self.assembly_manager[_page]
-            self.assembly_manager[_page] = MyParse()
-            self.assembly = self.assembly_manager[_page]
-            del _old
+            _old_id = self._notebook_manager[_page]
+
+            ''' Create new assembly + ID and replace link to page '''
+            new_id, new_assembly = self._assembly_manager.new_assembly()
+            self._notebook_manager[_page] = new_id
+
+            ''' Remove old assembly from manager '''
+            self._assembly_manager.remove_assembly(_old_id)
+
+            ''' Set new assembly to be active one '''
+            self.assembly = new_assembly
 
         # Load data, create nodes and edges, etc.
         self.assembly.load_step(open_filename)
@@ -1379,11 +1391,13 @@ class MainWindow(wx.Frame):
 
         ''' Display parts as shaded if selected, transparent/wireframe if not '''
         selected_items = self.selected_items
-        for item in self.assembly.OCC_dict:
-            if item in selected_items:
-                display_part(item)
-            else:
-                display_part(item, transparency = 1)
+        # for item in self.assembly.OCC_dict:
+        for item in self.assembly.nodes:
+            if item in self.assembly.OCC_dict:
+                if item in selected_items:
+                    display_part(item)
+                else:
+                    display_part(item, transparency = 1)
 
         self._active.occ_panel._display.View.FitAll()
         self._active.occ_panel._display.View.ZFitAll()
@@ -1673,9 +1687,9 @@ class MainWindow(wx.Frame):
 
 
     def get_image_name(self, _id, suffix = '.jpg'):
-        ''' Image file type and "suffix" here (jpg) is dictated by python-occ "Dump" method 
+        ''' Image file type and "suffix" here (jpg) is dictated by python-occ "Dump" method
             which can't be changed without delving into C++ '''
-        full_name = os.path.join(self.im_path, str(self.assembly._id), str(_id)) + suffix
+        full_name = os.path.join(self.im_path, str(self.assembly.assembly_id), str(_id)) + suffix
         print('Full path of image to fetch:\n', full_name)
 
         return full_name
@@ -1986,13 +2000,6 @@ class MainWindow(wx.Frame):
 
 
 
-    def UpdateLatticeView(self, event = None):
-
-        for assembly in self.assembly_manager:
-            pass
-
-
-
     def OnNewNodeClick(self, y_, x_):
 
         print('Creating new nodes and edges by unranking')
@@ -2037,7 +2044,7 @@ class MainWindow(wx.Frame):
 
 
         # Create and populate alternative assembly
-        _node_one = self.assembly.new_id
+        _node_one = self.assembly.new_node_id
         _node_two = _node_one + 1
 
         _parts_ids = [self.assembly.leaf_dict_inv[el] for el in _parts]
@@ -2198,20 +2205,6 @@ class MainWindow(wx.Frame):
 
 
 
-    # def create_new_id(self):
-
-    #     # Get new item ID that is greater than largest existing ID
-    #     try:
-    #         id_ = max([el for el in self.assembly.nodes] + [el_ for el_ in self._active.discarded.nodes]) + 1
-    #     except AttributeError:
-    #         try:
-    #             id_ = max([el for el in self.assembly.nodes]) + 1
-    #         except AttributeError:
-    #             return 0
-    #     return id_
-
-
-
     def OnTreeCtrlChanged(self):
 
         print('Running OnTreeCtrlChanged')
@@ -2259,7 +2252,7 @@ class MainWindow(wx.Frame):
         print('New parent = ', new_parent)
 
         # Get valid ID for new node then create
-        new_id   = self.assembly.new_id
+        new_id   = self.assembly.new_node_id
         text = self.new_assembly_text
         self.assembly.add_node(new_id, text = text, label = text)
         self.assembly.add_edge(new_parent, new_id)
@@ -2359,7 +2352,7 @@ class MainWindow(wx.Frame):
         # Get valid ID for new node then create
         no_disagg = 2
         for i in range(no_disagg):
-            new_id   = self.assembly.new_id
+            new_id   = self.assembly.new_node_id
             text = self.new_part_text
             self.assembly.add_node(new_id, text = text, label = text)
             self.assembly.add_edge(id_, new_id)
@@ -2369,6 +2362,7 @@ class MainWindow(wx.Frame):
         # Propagate changes
         self.ClearGUIItems()
         self.OnTreeCtrlChanged()
+        self.Update3DView()
 
 
 
@@ -2416,6 +2410,7 @@ class MainWindow(wx.Frame):
         # Propagate changes
         self.ClearGUIItems()
         self.OnTreeCtrlChanged()
+        self.Update3DView()
 
 
 
@@ -2451,7 +2446,7 @@ class MainWindow(wx.Frame):
         # MAIN "ADD NODE" ALGORITHM
         # ---
         # Create new node with selected item as parent
-        new_id = self.assembly.new_id
+        new_id = self.assembly.new_node_id
         text = self.new_part_text
         self.assembly.add_node(new_id, text = text, label = text)
         self.assembly.add_edge(id_, new_id)
@@ -2461,6 +2456,7 @@ class MainWindow(wx.Frame):
         # Propagate changes
         self.ClearGUIItems()
         self.OnTreeCtrlChanged()
+        self.Update3DView()
 
 
 
@@ -2477,9 +2473,6 @@ class MainWindow(wx.Frame):
         if len(selected_items) >= 1:
             print('Selected item(s) to remove:\n')
             for id_ in selected_items:
-                # id_ = self._active.ctc_dict_inv[item]
-                # print('ID = ', id_)
-                # self.selected_list.append(id_)
                 print('ID = ', id_)
         else:
             print('Cannot remove: no items selected\n')
@@ -2500,35 +2493,44 @@ class MainWindow(wx.Frame):
         # MAIN "REMOVE NODE" ALGORITHM
         # ---
         ## Get all non-connected nodes in list...
-        dependants_removed = self.assembly.remove_dependants_from(selected_items)
-        # ...then create subtree and copy it to discard pile...
-        for node in dependants_removed:
-            subgraph = nx.dfs_tree(self.assembly, node)
-            parent   = self.assembly.get_parent(node)
-            # self._active.discarded.add_nodes_from(subgraph.nodes)
-            # self._active.discarded.add_edges_from(subgraph.edges)
-            # # ... retaining head-parent data for future reconstruction...
-            # self._active.discarded.nodes[node]['remove_parent'] = parent
-            # ...then remove subtree from main assembly
-            self.assembly.remove_nodes_from(subgraph.nodes)
+        # dependants_removed = self.assembly.remove_dependants_from(selected_items)
+        # # ...then create subtree and copy it to discard pile...
+        # for node in dependants_removed:
+        #     subgraph = nx.dfs_tree(self.assembly, node)
+        #     parent   = self.assembly.get_parent(node)
+        #     # self._active.discarded.add_nodes_from(subgraph.nodes)
+        #     # self._active.discarded.add_edges_from(subgraph.edges)
+        #     # # ... retaining head-parent data for future reconstruction...
+        #     # self._active.discarded.nodes[node]['remove_parent'] = parent
+        #     # ...then remove subtree from main assembly
+        #     self.assembly.remove_nodes_from(subgraph.nodes)
 
 
-            # And lastly, if only one remaining sibling, remove it as redundant
-            # N.B. No need to track back up through parents and remove redundant nodes...
-            # ...if they are thus created, as this is done by "remove_redundant_nodes"...
-            # ...when entire tree is redrawn via "OnTreeCtrlChanged"...
-            # ---
-            # ...but it WOULD be necessary if it weren't redrawn in full
-            siblings = [el for el in self.assembly.successors(parent)]
-            print('Removed all user-specified nodes')
-            print('Remaining siblings: ', siblings)
-            if len(siblings) == 1:
-                print('Removing single remaining sibling as redundant nodes not allowed')
-                self.assembly.remove_node(siblings[-1])
+        #     # And lastly, if only one remaining sibling, remove it as redundant
+        #     # N.B. No need to track back up through parents and remove redundant nodes...
+        #     # ...if they are thus created, as this is done by "remove_redundant_nodes"...
+        #     # ...when entire tree is redrawn via "OnTreeCtrlChanged"...
+        #     # ---
+        #     # ...but it WOULD be necessary if it weren't redrawn in full
+        #     siblings = [el for el in self.assembly.successors(parent)]
+        #     print('Removed all user-specified nodes')
+        #     print('Remaining siblings: ', siblings)
+        #     if len(siblings) == 1:
+        #         print('Removing single remaining sibling as redundant nodes not allowed')
+        #         self.assembly.remove_node(siblings[-1])
+
+        for node in selected_items:
+            try:
+                self.assembly.remove_node(node)
+                print('Removed node: ', node)
+            except:
+                print('Could not remove node, may already have been removed: ', node)
 
         # Propagate changes
         self.ClearGUIItems()
         self.OnTreeCtrlChanged()
+        self.Update3DView()
+
 
 
 
@@ -2749,7 +2751,7 @@ class MainWindow(wx.Frame):
     def OnAbout(self, event):
 
         # Show program info
-        abt_text = """StrEmbed-5-5: A user interface for manipulation of design configurations\n
+        abt_text = """StrEmbed-5-6: A user interface for manipulation of design configurations\n
             Copyright (C) 2019-2020 Hugh Patrick Rice\n
             This research is supported by the UK Engineering and Physical Sciences
             Research Council (EPSRC) under grant number EP/S016406/1.\n
@@ -2764,7 +2766,7 @@ class MainWindow(wx.Frame):
             You should have received a copy of the GNU General Public License
             along with this program. If not, see <https://www.gnu.org/licenses/>."""
 
-        abt = wx.MessageDialog(self, abt_text, 'About StrEmbed-5-5', wx.OK)
+        abt = wx.MessageDialog(self, abt_text, 'About StrEmbed-5-6', wx.OK)
         # Show dialogue that stops process (modal)
         abt.ShowModal()
         abt.Destroy()
@@ -2811,25 +2813,22 @@ class MainWindow(wx.Frame):
 
 
 
-    @property
-    def new_assembly_id(self):
-        if not hasattr(self, "assembly_id_counter"):
-            self.assembly_id_counter = 0
-        self.assembly_id_counter += 1
-        return self.assembly_id_counter
-
-
-
     def MakeNewAssembly(self, _name = None):
 
         self.Freeze()
 
+
+
+        ''' Create assembly object and add to assembly manager '''
+        # assembly = StepParse(new_id)
+        new_id, new_assembly = self._assembly_manager.new_assembly()
+
         if _name is None:
-            new_id = self.new_assembly_id
+            # new_id = self.new_assembly_id
             name_id = new_id
             _name = 'Assembly ' + str(name_id)
             # Check name doesn't exist; create new name by increment if so
-            _names = [el.name for el in self.assembly_manager]
+            _names = [el.name for el in self._notebook_manager]
             while _name in _names:
                 print('Name already exists, you drongo!')
                 name_id += 1
@@ -2837,11 +2836,7 @@ class MainWindow(wx.Frame):
                 continue
         _page = NotebookPanel(self._notebook, _name, new_id, border = self._border)
 
-
-
-        ''' Create assembly object and add to assembly manager '''
-        assembly = MyParse(_id = new_id)
-        self.assembly_manager[_page] = assembly
+        self._notebook_manager[_page] = new_id
 
 
 
@@ -2868,6 +2863,8 @@ class MainWindow(wx.Frame):
         ''' Disable until file loaded '''
         self._active.Disable()
 
+
+
         self.Thaw()
 
 
@@ -2882,10 +2879,11 @@ class MainWindow(wx.Frame):
         _text = 'Active notebook tab: ' + self._notebook.GetPageText(_selection)
         self.AddText(_text)
 
-        ''' Activate window (here NotebookPanel) and assembly (MyParse)'''
-        self.assembly = self.assembly_manager[_page]
+        ''' Activate window (here NotebookPanel) and assembly '''
+        _assembly_id = self._notebook_manager[_page]
+        self.assembly = self._assembly_manager._mgr[_assembly_id]
         self._active = _page
-        print('Assembly ID:   ', self.assembly._id)
+        print('Assembly ID:   ', _assembly_id)
 
         ''' Switch to selected assembly in lattive view '''
         try:

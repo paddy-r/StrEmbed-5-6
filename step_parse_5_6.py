@@ -22,6 +22,9 @@
 '''HR 11/08/20 onwards
 Version 5.5'''
 
+'''HR 02/12/20 onwards
+Version 5.6 '''
+
 # Ordered dictionary
 from collections import OrderedDict as odict
 
@@ -78,18 +81,108 @@ from OCC.Core.BRepBuilderAPI import BRepBuilderAPI_Transform
 
 
 
+
+
+''' To contain lattice structure that manages/contains all assemblies '''
+class AssemblyManager():
+
+    def __init__(self, *args, **kwargs):
+        self._mgr= {}
+        self._lattice = StepParse('lattice')
+        self._node_map = {}
+        self._edge_map = {}
+
+
+
+    @property
+    def new_assembly_id(self):
+        if not hasattr(self, "assembly_id_counter"):
+            self.assembly_id_counter = 0
+        self.assembly_id_counter += 1
+        return self.assembly_id_counter
+
+
+
+    def new_assembly(self, _dominant = None):
+        _assembly_id = self.new_assembly_id
+        _assembly = StepParse(_assembly_id)
+        self._mgr.update({_assembly_id:_assembly})
+
+        # self.UpdateLattice(assembly, _dominant)
+        return _assembly_id, _assembly
+
+
+
+    def remove_assembly(self, _id):
+        if _id in self._mgr:
+            print('Assembly ', _id, 'found in and removed from manager')
+            self._mgr.pop(_id)
+            return True
+        else:
+            print('Assembly ', _id, 'not found in manager; could not be removed')
+            return False
+
+
+
+    # def get_master_item(ass, item):
+    #     for k,v in _map.items():
+    #         for _k,_v in v.items():
+    #             if _k == ass and _v == item:
+    #                 return k
+
+
+
+    def get_master_node(self, _assembly_id, _item):
+        for node in self._lattice.nodes:
+            for k,v in self._lattice.nodes[node].items():
+                if k == _assembly_id and v == _item:
+                    print('Found master node: ', node)
+                    return node
+
+
+
+
+    def AddToLattice(self, _id, _dominant = None):
+        ''' If first assembly being added, just map nodes and edges directly
+            No need to do any similarity calculations '''
+        if len(self._mgr) == 1:
+            _a1 = self._mgr[_id]
+            for node in _a1.nodes:
+                new_node = self._lattice.new_node_id
+                self._lattice.add_node(new_node)
+                self._lattice.nodes[new_node].update({_id:node})
+                self._node_map[new_node] = {_id:node}
+            return
+
+        ''' If no dominant assembly specified, get the one with lowest ID
+            if any exist in _mgr '''
+        if not self._mgr:
+            print('Cannot add assembly to lattice: no assembly in manager')
+            return False
+        else:
+            if not _dominant:
+                _dominant = min(self._mgr)
+            _dominant = self._mgr[_dominant]
+            print('ID of dominant assembly in manager: ', min(self._mgr))
+            return True
+
+
+
+
+
 class StepParse(nx.DiGraph):
 
     # Override constructor to add part_level
-    def __init__(self, *args, **kwargs):
+    def __init__(self, assembly_id = None, *args, **kwargs):
 
            super().__init__(*args, **kwargs)
            self.part_level = 1
            self.topo_types = (TopoDS_Solid, TopoDS_Compound)
-
+           self.assembly_id = assembly_id
+           self.OCC_dict = {}
 
     @property
-    def new_id(self):
+    def new_node_id(self):
         if not hasattr(self, 'id_counter'):
             self.id_counter = 0
         self.id_counter += 1
@@ -315,7 +408,7 @@ class StepParse(nx.DiGraph):
 
         self.step_dict = odict()
 
-        root_id = self.new_id
+        root_id = self.new_node_id
         self.step_dict[root_id] = root_node_ref
 
         text = self.part_dict[self.step_dict[root_id]]
@@ -326,11 +419,10 @@ class StepParse(nx.DiGraph):
             for line in self.nauo_refs:
                 if line[1] == root_node:
                     # i[0] += 1
-                    _id = self.new_id
+                    _id = self.new_node_id
                     self.step_dict[_id] = str(line[2])
                     text = self.part_dict[self.step_dict[_id]]
                     self.add_node(_id, text = text, label = text)
-                    print('Added node', _id)
                     self.add_edge(parent, _id)
                     tree_next_layer(self, _id)
 
@@ -341,7 +433,6 @@ class StepParse(nx.DiGraph):
 
 
     def OCC_read_file(self, filename):
-        #######################################################################
         """
         HR 14/7/20
         All pythonocc intialisation for 3D view
@@ -367,7 +458,7 @@ class StepParse(nx.DiGraph):
         ##You should have received a copy of the GNU Lesser General Public License
         ##along with pythonOCC.  If not, see <http://www.gnu.org/licenses/>.
 
-        # Changed to odict to allow direct mapping to step_dict (see later)
+        ''' Changed to odict to allow direct mapping to step_dict (see later) '''
         output_shapes = odict()
 
         # Create a handle to a document
@@ -517,13 +608,12 @@ class StepParse(nx.DiGraph):
         tree_list = [k for k in self.step_dict.keys() if k in self.leaves]
 
         # Map master IDs to OCC objects
-        self.OCC_dict = dict(zip(tree_list, OCC_list))
+        self.OCC_dict.update(dict(zip(tree_list, OCC_list)))
 
-        print('\nOCC dict:')
-        for k,v in self.OCC_dict.items():
-            print(k,v)
-        print('\n')
-        #######################################################################
+        # print('\nOCC dict:')
+        # for k,v in self.OCC_dict.items():
+        #     print(k,v)
+        # print('\n')
 
 
 
@@ -543,13 +633,11 @@ class StepParse(nx.DiGraph):
                 # Don't remove if at head of tree (i.e. if in_degree == 0)...
                 # ...as Networkx would create new "None" node as parent
                 if self.in_degree(_node) != 0:
-                    print('Parent/child to add edge b/t: ', _parent, _child)
                     self.add_edge(_parent, _child)
                 _to_remove.append(_node)
 
         # ...then remove in separate loop to avoid list changing size during previous loop
         for _node in _to_remove:
-            print('Removing node ', _node)
             self.remove_node(_node)
 
 
@@ -624,30 +712,30 @@ class StepParse(nx.DiGraph):
 
 
 
-    def remove_dependants_from(self, nodes):
+    # def remove_dependants_from(self, nodes):
 
-        if type(nodes) == int:
-            nodes = [nodes]
+    #     if type(nodes) == int:
+    #         nodes = [nodes]
 
-        # Remove dependants from nodes list
-        depth_dict = {el:self.get_node_depth(el) for el in nodes}
-        depth_list = sorted(list(set(depth_dict.values())))
+    #     # Remove dependants from nodes list
+    #     depth_dict = {el:self.get_node_depth(el) for el in nodes}
+    #     depth_list = sorted(list(set(depth_dict.values())))
 
-        removed_nodes = []
-        for depth in depth_list:
-            at_depth    = [k for k,v in depth_dict.items() if v == depth]
-            above_depth = [k for k,v in depth_dict.items() if v < depth]
-            to_check    = list(set(nodes) - set(removed_nodes) - set(at_depth) - set(above_depth))
-            for node in at_depth:
-                for el in to_check:
-                    if nx.has_path(self, node, el):
-                        removed_nodes.append(el)
+    #     removed_nodes = []
+    #     for depth in depth_list:
+    #         at_depth    = [k for k,v in depth_dict.items() if v == depth]
+    #         above_depth = [k for k,v in depth_dict.items() if v < depth]
+    #         to_check    = list(set(nodes) - set(removed_nodes) - set(at_depth) - set(above_depth))
+    #         for node in at_depth:
+    #             for el in to_check:
+    #                 if nx.has_path(self, node, el):
+    #                     removed_nodes.append(el)
 
-        retained_nodes = list(set(nodes) - set(removed_nodes))
+    #     retained_nodes = list(set(nodes) - set(removed_nodes))
 
-        print('Descendant nodes: ', removed_nodes)
-        print('Retained nodes:   ', retained_nodes)
-        return retained_nodes
+    #     print('Descendant nodes: ', removed_nodes)
+    #     print('Retained nodes:   ', retained_nodes)
+    #     return retained_nodes
 
 
 
@@ -942,9 +1030,9 @@ class StepParse(nx.DiGraph):
             2. Number of children
             3. Name of parent '''
 
-        if nodes1 == None:
+        if not nodes1:
             nodes1 = a1.nodes
-        if nodes2 == None:
+        if not nodes2:
             nodes2 = a2.nodes
 
         # if type(nodes1) is not list:
@@ -1064,7 +1152,6 @@ class StepParse(nx.DiGraph):
             nodes1 = a1.nodes
             nodes2 = a2.nodes
         elif (not nodes1) != (not nodes2):
-            print('One node set not present; cannot continue')
             return None
 
         _map = {}
@@ -1107,24 +1194,22 @@ class StepParse(nx.DiGraph):
 
             _max = max([el for el in _simdict.values()])
             _occ = sum(value == _max for value in _simdict.values())
-            print('Occurrences = ', _occ)
 
             ''' Get valid (i.e. not already mapped) k-v pairs in simdict '''
             if (singles_only and _occ == 1) or not singles_only:
                 node2 = [_k for _k,_v in _simdict.items() if _v == _max][0]
                 _map[node1] = node2
-                print('\nMapped node1, node2, ', node1, node2)
 
         return _map
 
 
 
     @classmethod
-    def remap_entries(self, k, v, _map, _sim):
+    def remap_entries(self, k, v, _dupe, _sim):
 
         # Start building new dupe map elements...
-        _toremove1 = [el for el in _map]
-        _toremove2 = [el for el in _map.values()]
+        _toremove1 = [el for el in _dupe]
+        _toremove2 = [el for el in _dupe.values()]
 
         _n1 = tuple([el for el in k if el not in _toremove1])
         _n2 = tuple([el for el in v if el not in _toremove2])
@@ -1137,17 +1222,15 @@ class StepParse(nx.DiGraph):
                 if _el in _newv[el]:
                     _newv[el].pop(_el, None)
 
-        _mapnew = {}
+        _dupenew = {}
         _simnew = {}
         # Check that n1 and n2 both have items in, otherwise would be redundant...
         if (len(_n1) > 0) and (len(_n2) > 0):
             # ...then actually create entries...
-            print('New dupe map entry: ', _n1, _n2, '\n')
-            print('New total similarity dict entry: ', _n1, _newv, '\n')
-            _mapnew[_n1] = _n2
+            _dupenew[_n1] = _n2
             _simnew[_n1] = _newv
 
-        return _mapnew, _simnew
+        return _dupenew, _simnew
 
 
 
@@ -1164,7 +1247,6 @@ class StepParse(nx.DiGraph):
         ''' HR 26/11/20 Workaround to avoid problems for node sets with differing sizes
             Larger problems with this method remain, as described above '''
         if len(nodes1) != len(nodes2):
-            print('Length of n1, n2 (', len(nodes1), len(nodes2), ') not equal; returning original simdict')
             return {tuple(nodes1):tuple(nodes2)}
 
         _first = nodes1[0]
@@ -1172,12 +1254,9 @@ class StepParse(nx.DiGraph):
         _firstvalueset = set(_firstdict.values())
 
         if len(_firstvalueset) == 1:
-            print('\nNo need to reform: only one similarity value, returning original entry')
             return {tuple(nodes1):tuple(nodes2)}
 
         _sims = list(_firstdict.values())
-
-        print('\nReforming sim groupings for node1 set and total sim values: \n', nodes1)
 
         _newentries = {}
 
@@ -1187,13 +1266,9 @@ class StepParse(nx.DiGraph):
             _n1 = [nodes1[i] for i in _i]
             _n2 = [nodes2[i] for i in _i]
 
-            print('\nIndices of ', el, ': ', _i)
-            print('New grouping: ', tuple(_n1), tuple(_n2))
-
             # Reform grouping; no need to rebuild totals dict as not used after this
             _newentries[tuple(_n1)] = tuple(_n2)
 
-        print('\nNew entries returned: ', _newentries)
         return _newentries
 
 
@@ -1204,7 +1279,6 @@ class StepParse(nx.DiGraph):
     @classmethod
     def map_multi_grouping(self, k, v):
 
-        print('k,v: ', k,v)
         _toremove = []
         _newmap = {}
 
@@ -1228,7 +1302,6 @@ class StepParse(nx.DiGraph):
             for _k,_v in _remainder.items():
                 _newmap[_k] = _v
 
-        print('Done')
         return _newmap
 
 
@@ -1245,7 +1318,6 @@ class StepParse(nx.DiGraph):
             and get dupe map for any unmapped exact matches
         '''
         _dupemap, _newitems = StepParse.map_exact(a1,a2)
-        print('Adding newitems...', _newitems)
         _mapped.update(_newitems)
 
 
@@ -1256,13 +1328,10 @@ class StepParse(nx.DiGraph):
             e.g. parent node names (or whatever the user specifies
             via "weight" values in "node_sim") '''
 
-        print('Calculating similarities for exact-duplicate groups...\n\n')
-
         _sim = {}
         for k,v in _dupemap.items():
             _sim[k] = self.node_sim(a1, a2, k, v)
 
-        print('Done!\n\n')
 
 
 
@@ -1314,7 +1383,6 @@ class StepParse(nx.DiGraph):
                 as all single-occurrence values removed above '''
 
             _newentries = self.reform_entries(k, _dupemap[k], _totals[k])
-            print('New entries from reforming: ', _newentries)
             _dupemap.pop(k, None)
             _dupemap.update(_newentries)
 
@@ -1325,8 +1393,6 @@ class StepParse(nx.DiGraph):
         '''
 
         _tomap = {k:v for k,v in _dupemap.items()}
-
-        print('_tomap: \n', _tomap)
 
         for k,v in _tomap.items():
 
@@ -1341,7 +1407,6 @@ class StepParse(nx.DiGraph):
         ''' Put together all unmapped items '''
         _u1 = [el for el in a1.nodes if el not in _mapped]
         _u2 = [el for el in a2.nodes if el not in _mapped.values()]
-        print('\nUnmapped: ', _u1, _u2)
 
 
 
@@ -1350,26 +1415,22 @@ class StepParse(nx.DiGraph):
         '''
 
         ''' Get total similarity (i.e. sum of all measures), currently element [0] '''
-        print('Calculating similarities...\n\n')
-        print('Node set are: ', _u1, _u2)
         # _sim_u = self.node_sim(a1, a2, _u1, _u2, weight = [1,0.25,0.5,0.1,0.1])[0]
         _sim_u = self.node_sim(a1, a2, _u1, _u2, weight = [1,0,1,0,0])[0]
-        print('Done!\n')
 
         ''' First job, as in previous sections: get any easy mappings where
             max sim value appears once, and remove from dict '''
         _newmap = self.get_by_max(_sim_u)
         if _newmap:
             _mapped.update(_newmap)
-            print('Single-occurrence sim matches found: \n', _newmap)
 
         for node1 in _newmap:
             _u1.remove(node1)
         for node2 in _newmap.values():
             _u2.remove(node2)
 
-        _mapnew, _simnew = self.remap_entries(_u1, _u2, _newmap, _sim_u)
-        _mapped.update(_mapnew)
+        _dupenew, _simnew = self.remap_entries(_u1, _u2, _newmap, _sim_u)
+        _dupemap.update(_dupenew)
 
 
         # ''' Next stage is to get sim groupings
