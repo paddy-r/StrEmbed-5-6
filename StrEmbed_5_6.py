@@ -1136,7 +1136,7 @@ class MainWindow(wx.Frame):
 
 
     def OnDeleteAssembly(self, event):
-        ''' Veto if page being deleted is only one... '''
+        ''' Veto if page being deleted is the only one... '''
         if self._notebook.GetPageCount() <= 1:
             print('Cannot delete only assembly')
             return
@@ -1201,25 +1201,25 @@ class MainWindow(wx.Frame):
         else:
             print('Trying to load file...')
 
+        ''' Get active page and assembly ID '''
+        _page = self._notebook.GetPage(self._notebook.GetSelection())
+        _id = self._notebook_manager[_page]
+
         # Wipe existing assembly if one already loaded; replace with empty one
         if self._active.file_open:
-            ''' Get active page and assembly ID '''
-            _page = self._notebook.GetPage(self._notebook.GetSelection())
-            _old_id = self._notebook_manager[_page]
+            ''' Remove old assembly from manager '''
+            self._assembly_manager.remove_assembly(_id)
 
             ''' Create new assembly + ID and replace link to page '''
-            new_id, new_assembly = self._assembly_manager.new_assembly()
-            self._notebook_manager[_page] = new_id
-
-            ''' Remove old assembly from manager '''
-            self._assembly_manager.remove_assembly(_old_id)
+            _id, _assembly = self._assembly_manager.new_assembly()
+            self._notebook_manager[_page] = _id
 
             ''' Set new assembly to be active one '''
-            self.assembly = new_assembly
+            self.assembly = _assembly
 
         # Load data, create nodes and edges, etc.
         self.assembly.load_step(open_filename)
-        self.assembly.create_tree()
+        self._assembly_manager.AddToLattice(_id)
         self.assembly.set_node_positions()
 
         # OCC 3D data returned here
@@ -1866,6 +1866,7 @@ class MainWindow(wx.Frame):
         # Functor to find nearest value in sorted list
         # ---
         # HR 4/3/20 THIS SHOULD BE REWRITTEN COMPLETELY TO USE MPL PICKER/ARTIST FUNCTIONALITY
+        # HR 01/21 NO, PICKER/ARTIST NOT SUITABLE
         def get_nearest(value, list_in):
 
             # print('list_in = ', list_in)
@@ -2230,12 +2231,12 @@ class MainWindow(wx.Frame):
             for id_ in selected_items:
                 print('\nID = ', id_)
         else:
-            print('Cannot assemble: no items or only one item selected\n')
+            print('Cannot assemble: fewer than two items selected\n')
             return
 
         # Check root is not present in selected items
         if self.assembly.get_root() in selected_items:
-            print('Cannot create assembly: items to assemble include root')
+            print('Cannot assemble: selected items include root')
             return
 
 
@@ -2245,14 +2246,14 @@ class MainWindow(wx.Frame):
         # Get selected item that is highest up tree (i.e. lowest depth)
         depths = {}
         for id_ in selected_items:
-            depths[id_] = self.assembly.get_node_depth(id_)
+            depths[id_] = self.assembly.node_depth(id_)
             print('ID = ', id_, '; parent depth = ', depths[id_])
         highest_node = min(depths, key = depths.get)
         new_parent = self.assembly.get_parent(highest_node)
         print('New parent = ', new_parent)
 
         # Get valid ID for new node then create
-        new_id   = self.assembly.new_node_id
+        new_id = self.assembly.new_node_id
         text = self.new_assembly_text
         self.assembly.add_node(new_id, text = text, label = text)
         self.assembly.add_edge(new_parent, new_id)
@@ -2296,25 +2297,29 @@ class MainWindow(wx.Frame):
         # MAIN "FLATTEN" ALGORITHM
         # ---
         # Get all children of item
-        children_ = nx.descendants(self.assembly, id_)
-        children_parts = [el for el in children_ if el in leaves]
-        print('Children parts = ', children_parts)
-        children_ass = [el for el in children_ if not el in leaves]
-        print('Children assemblies = ', children_ass)
+        # children_ = nx.descendants(self.assembly, id_)
+        # children_parts = [el for el in children_ if el in leaves]
+        # print('Children parts = ', children_parts)
+        # children_ass = [el for el in children_ if not el in leaves]
+        # print('Children assemblies = ', children_ass)
 
-        # Move all children that are indivisible parts
-        for child in children_parts:
-            self.assembly.move_node(child, id_)
+        # # Move all children that are indivisible parts
+        # for child in children_parts:
+        #     self.assembly.move_node(child, id_)
 
-        # Delete all children that are assemblies
-        for child in children_ass:
-            successors = self.assembly.successors(child)
-            parent     = self.assembly.get_parent(child)
-            # self._active.discarded.add_node(child)
-            # # Add immediate children to data of discarded node for future reconstruction
-            # self._active.discarded.nodes[child]['flatten_children'] = successors
-            # self._active.discarded.nodes[child]['flatten_parent']   = parent
-            # self.assembly.remove_node(child)
+        # # Delete all children that are assemblies
+        # for child in children_ass:
+        #     successors = self.assembly.successors(child)
+        #     parent     = self.assembly.get_parent(child)
+        #     # self._active.discarded.add_node(child)
+        #     # # Add immediate children to data of discarded node for future reconstruction
+        #     # self._active.discarded.nodes[child]['flatten_children'] = successors
+        #     # self._active.discarded.nodes[child]['flatten_parent']   = parent
+        #     # self.assembly.remove_node(child)
+        _page = self._notebook.GetPage(self._notebook.GetSelection())
+        _assembly_id = self._notebook_manager[_page]
+        self._assembly_manager.flatten_in_lattice(_assembly_id, id_)
+
 
         # Propagate changes
         self.ClearGUIItems()
@@ -2492,6 +2497,7 @@ class MainWindow(wx.Frame):
 
         # MAIN "REMOVE NODE" ALGORITHM
         # ---
+
         ## Get all non-connected nodes in list...
         # dependants_removed = self.assembly.remove_dependants_from(selected_items)
         # # ...then create subtree and copy it to discard pile...
@@ -2521,7 +2527,7 @@ class MainWindow(wx.Frame):
 
         for node in selected_items:
             try:
-                self.assembly.remove_node(node)
+                self.assembly.remove_node_and_dependants(node)
                 print('Removed node: ', node)
             except:
                 print('Could not remove node, may already have been removed: ', node)
@@ -2694,7 +2700,7 @@ class MainWindow(wx.Frame):
 
         # CASE 2: DRAG AND DROP ITEMS DO NOT HAVE THE SAME PARENT: SIMPLE MOVE
         # ---
-        # Drop item is sibling unless it's root, then it's parent
+        # Drop item becomes sibling; unless it's root, then it becomes parent
         if self.assembly.get_parent(id_):
             parent = self.assembly.get_parent(id_)
         else:

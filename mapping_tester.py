@@ -87,14 +87,14 @@ for k,v in _node_map.items():
     master_node_map[_id] = {_id1:k, _id2:v}
 
 ''' Add unmapped nodes from a1 and a2 '''
-_u1 = results[1][0]
+_u1,_u2 = results[1]
+
 for n1 in _u1:
     _id = lattice.new_node_id
     lattice.add_node(_id)
     lattice.nodes[_id][_id1] = n1
     master_node_map[_id] = {_id1:n1}
 
-_u2 = results[1][1]
 for n2 in _u2:
     _id = lattice.new_node_id
     lattice.add_node(_id)

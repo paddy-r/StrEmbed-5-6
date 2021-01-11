@@ -89,8 +89,9 @@ class AssemblyManager():
     def __init__(self, *args, **kwargs):
         self._mgr= {}
         self._lattice = StepParse('lattice')
-        self._node_map = {}
-        self._edge_map = {}
+
+        # self.new_assembly_text = 'Unnamed item'
+        # self.new_part_text     = 'Unnamed item'
 
 
 
@@ -107,8 +108,8 @@ class AssemblyManager():
         _assembly_id = self.new_assembly_id
         _assembly = StepParse(_assembly_id)
         self._mgr.update({_assembly_id:_assembly})
+        print('Created new assembly with ID: ', _assembly_id)
 
-        # self.UpdateLattice(assembly, _dominant)
         return _assembly_id, _assembly
 
 
@@ -124,47 +125,476 @@ class AssemblyManager():
 
 
 
-    # def get_master_item(ass, item):
-    #     for k,v in _map.items():
-    #         for _k,_v in v.items():
-    #             if _k == ass and _v == item:
-    #                 return k
-
-
-
+    ''' Get lattice node corresponding to node in given assembly
+        Return lattice node if present, otherwise None '''
     def get_master_node(self, _assembly_id, _item):
         for node in self._lattice.nodes:
             for k,v in self._lattice.nodes[node].items():
                 if k == _assembly_id and v == _item:
-                    print('Found master node: ', node)
                     return node
+        return None
 
+
+
+
+
+    ''' ----------------------------------------------------------------------
+        ----------------------------------------------------------------------
+        HR JAN 2021 ASSEMBLY OPERATIONS TO BE REFERRED TO IN GUI
+        Plan:
+        - Copy existing methods from GUI and check they're working
+        - Goal is to remove any reference to individual assemblies in GUI,
+            all interactions in GUI should be with assembly manager here
+    '''
+
+
+
+    def add_edge_in_lattice(self, _id, u, v):
+
+        '''
+        Assembly-specific operations
+        '''
+        self._mgr[_id].add_edge(u, v)
+
+        '''
+        Lattice operations
+        '''
+        _um = self.get_master_node(_id, u)
+        _vm = self.get_master_node(_id, v)
+
+        if (_um,_vm) in self._lattice.edges:
+            print('Edge already exists; adding entry')
+        else:
+            print('Edge does not exist in lattice; creating new edge and entry')
+            self._lattice.add_edge(_um,_vm)
+        self._lattice.edges[(_um,_vm)].update({_id:(u,v)})
+
+
+
+    def remove_edge_in_lattice(self, _id, u, v):
+
+        '''
+        Assembly-specific operations
+        '''
+        self._mgr[_id].remove_edge(u, v)
+
+        '''
+        Lattice operations
+        '''
+        _um = self.get_master_node(_id, u)
+        _vm = self.get_master_node(_id, v)
+
+        _len = len(self._lattice.edges[(_um,_vm)])
+        if _len == 1:
+            print('Edge dict has len = 1; removing whole edge')
+            self._lattice.remove_edge(_um,_vm)
+        else:
+            print('Edge dict has len > 1; removing edge dict entry for assembly')
+            self._lattice.edges[(_um,_vm)].pop(_id)
+
+
+
+    def add_node_in_lattice(self, _id, **attr):
+
+        _ass = self._mgr[_id]
+        _node = _ass.new_node_id
+
+        '''
+        Assembly-specific operations
+        '''
+        _ass.add_node(_node, **attr)
+
+        '''
+        Lattice operations
+        '''
+        _nodem = self._lattice.new_node_id
+        self._lattice.add_node(_nodem)
+        self._lattice.nodes[_nodem].update({_id:_node})
+
+        return _node, _nodem
+
+
+
+    def remove_node_in_lattice(self, _id, _node):
+
+        _ass = self._mgr[_id]
+        _ins = list(_ass.in_edges(_node))
+        _outs = list(_ass.out_edges(_node))
+        _nm = self.get_master_node(_id, _node)
+
+        '''
+        NOTES
+        - Order of operations is unusual here, to avoid missing edges
+        - Redundant edges are removed in lattice first
+        - Then node/edges removed in assembly
+        - Then remaining node/edge references removed in lattice dicts
+        '''
+
+        ''' Remove now-redundant edges (lattice) '''
+        _edges = _ins + _outs
+        for _edge in _edges:
+            print('Removing edge: ', _edge[0], _edge[1])
+            self.remove_edge_in_lattice(_id, _edge[0], _edge[1])
+
+        ''' Remove node and edges (assembly) '''
+        _ass.remove_node(_node)
+
+        ''' Remove node (dicts in lattice) '''
+        _len = len(self._lattice.nodes[_nm])
+        if _len == 1:
+            print('Node dict has len = 1; removing whole node')
+            self._lattice.remove_node(_nm)
+        else:
+            print('Node dict has len > 1; removing node dict entry for assembly')
+            self._lattice.nodes[_nm].pop(_id)
+
+
+
+    def move_node_in_lattice(self, _id, _node, _parent):
+
+        _ass = self._mgr[_id]
+        _old_parent = _ass.get_parent(_node)
+
+        ''' Check if is root, i.e. has no parent '''
+        if (_old_parent is None):
+            print('Root node cannot be moved; not proceeding')
+            return False
+
+        ''' Remove old edge '''
+        self.remove_edge_in_lattice(_id, _old_parent, _node)
+
+        ''' Create new edge '''
+        self.add_edge_in_lattice(_id, _parent, _node)
+
+        return True
+
+
+
+    def assemble_in_lattice(self, _id, _nodes, **attr):
+
+        ''' Check selected items are present and suitable '''
+        if (len(_nodes) <= 1):
+            print('No or one item(s) selected')
+            return
+
+        print('Selected items to assemble:\n')
+        for _node in _nodes:
+            print('\nID = ', _node)
+
+        _ass = self._mgr[_id]
+
+        ''' Check root is not present in nodes '''
+        if _ass.get_root() in _nodes:
+            print('Cannot assemble: selected items include root')
+            return
+
+        '''
+        MAIN "ASSEMBLE" ALGORITHM
+        '''
+
+        ''' Get selected item that is highest up tree (i.e. lowest depth) '''
+        depths = {}
+        for _node in _nodes:
+            depths[_node] = _ass.node_depth(_node)
+            print('ID = ', _node, '; parent depth = ', depths[_node])
+        highest_node = min(depths, key = depths.get)
+        new_parent = _ass.get_parent(highest_node)
+        print('New parent = ', new_parent)
+
+        ''' Get valid ID for new node then create '''
+        new_sub, _ = self.add_node_in_lattice(_id, **attr)
+        self.add_edge_in_lattice(_id, new_parent, new_sub)
+
+        ''' Move all selected items to be children of new node '''
+        for _node in _nodes:
+            self.move_node_in_lattice(_id, _node, new_sub)
+
+        return new_parent
+
+
+
+    def flatten_in_lattice(self, _id, _node):
+
+        _ass = self._mgr[_id]
+        leaves = _ass.leaves
+        print('Leaves: ', leaves)
+
+        if _node not in leaves:
+            print('ID of item to flatten = ', _node)
+        else:
+            print('Cannot flatten: item is a leaf node/irreducible part\n')
+            return
+
+        '''
+        MAIN "FLATTEN" ALGORITHM
+        '''
+
+        ''' Get all children of item '''
+        ch = nx.descendants(_ass, _node)
+        ch_parts = [el for el in ch if el in leaves]
+        print('Children parts = ', ch_parts)
+        ch_ass = [el for el in ch if not el in leaves]
+        print('Children assemblies = ', ch_ass)
+
+        ''' Move all children that are indivisible parts '''
+        for child in ch_parts:
+            self.move_node_in_lattice(_id, child, _node)
+
+        ''' Delete all children that are assemblies '''
+        for child in ch_ass:
+            self.remove_node_in_lattice(_id, child)
+
+
+
+    def disaggregate_in_lattice(self, _id, _node, num_disagg = 2, **attr):
+
+        _ass = self._mgr[_id]
+        leaves = _ass.leaves
+
+        if _node in leaves:
+            print('ID of item to disaggregate = ', _node)
+        else:
+            print('Cannot disaggregate: item is not a leaf node/irreducible part\n')
+            return
+
+        '''
+        MAIN "DISAGGREGATE" ALGORITHM
+        '''
+
+        ''' Get valid ID for new node then create '''
+        for i in range(num_disagg):
+            new_node, _ = self.add_node_in_lattice(_id, **attr)
+            self.add_edge_in_lattice(_id, _node, new_node)
+
+
+
+    def aggregate_in_lattice(self, _id, _node):
+
+        _ass = self._mgr[_id]
+        leaves =_ass.leaves
+
+        if _node not in leaves:
+            print('ID of item to aggregate = ', _node)
+        else:
+            print('Cannot aggregate: item is a leaf node/irreducible part\n')
+            return
+
+        '''
+        MAIN "AGGREGATE" ALGORITHM
+        '''
+
+        ''' Get children of node and remove '''
+        ch = nx.descendants(_ass, _node)
+        print('Children aggregated: ', ch)
+        for child in ch:
+            try:
+                self.remove_node_in_lattice(_id, child)
+                print('Removed node ', child)
+            except:
+                print('Could not delete node')
+
+
+
+    ''' ----------------------------------------------------------------------
+        ----------------------------------------------------------------------
+    '''
 
 
 
     def AddToLattice(self, _id, _dominant = None):
+
+        if not self._mgr:
+            print('Cannot add assembly to lattice: no assembly in manager')
+            return False
+
+        if _id not in self._mgr:
+            print('ID: ', _id)
+            print('Assembly not in manager; not proceeding')
+            return False
+
         ''' If first assembly being added, just map nodes and edges directly
             No need to do any similarity calculations '''
         if len(self._mgr) == 1:
+
             _a1 = self._mgr[_id]
+
             for node in _a1.nodes:
                 new_node = self._lattice.new_node_id
                 self._lattice.add_node(new_node)
                 self._lattice.nodes[new_node].update({_id:node})
-                self._node_map[new_node] = {_id:node}
-            return
 
-        ''' If no dominant assembly specified, get the one with lowest ID
-            if any exist in _mgr '''
-        if not self._mgr:
-            print('Cannot add assembly to lattice: no assembly in manager')
-            return False
-        else:
-            if not _dominant:
-                _dominant = min(self._mgr)
-            _dominant = self._mgr[_dominant]
-            print('ID of dominant assembly in manager: ', min(self._mgr))
+            ''' Nodes must exist as edges require "get_master_node" '''
+            for n1,n2 in _a1.edges:
+                u = self.get_master_node(_id, n1)
+                v = self.get_master_node(_id, n2)
+                self._lattice.add_edge(u,v)
+                self._lattice.edges[(u,v)].update({_id:(n1,n2)})
+
             return True
+
+
+
+        ''' If no dominant assembly specified/not found
+            get the one with lowest ID '''
+        if (not _dominant) or (_dominant not in self._mgr):
+            print('Dominant assembly not specified or not found in manager; defaulting to assembly with lowest ID')
+            _idlist = sorted([el for el in self._mgr])
+            _idlist.remove(_id)
+            _dominant = _idlist[0]
+
+
+
+        ''' Assemblies to be compared established by this point '''
+        print('ID of dominant assembly in manager: ', _dominant)
+        print('ID of assembly to be added:         ', _id)
+
+        _id1 = _dominant
+        _id2 = _id
+
+        _a1 = self._mgr[_id1]
+        _a2 = self._mgr[_id2]
+        print('a1 nodes: ', _a1.nodes)
+        print('a2 nodes: ', _a2.nodes)
+
+
+
+        '''
+        MAIN SECTION:
+            1. DO NODE COMPARISON AND COMPUTE PAIR-WISE SIMILARITIES
+            2. GET NODE MAP BETWEEN DOMINANT AND NEW ASSEMBLIES
+            3. ADD NEW ASSEMBLY TO LATTICE GRAPH
+        '''
+        results = StepParse.map_nodes(_a1, _a2)
+
+        ''' Get node map (n1:n2) and lists of unmapped nodes in a1 and a2 '''
+        _map = results[0]
+        _u1, _u2 = results[1]
+
+
+        '''
+            NODES
+        '''
+
+        ''' Append to existing master node dict if already present... '''
+        for n1,n2 in _map.items():
+            ''' Returns None if not present... '''
+            _master_node = self.get_master_node(_id1, n1)
+            ''' ...but if already present, add... '''
+            if _master_node:
+                self._lattice.nodes[_master_node].update({_id2:n2})
+
+        ''' ...else create new master node entry '''
+        for n2 in _u2:
+            _node = self._lattice.new_node_id
+            self._lattice.add_node(_node)
+            self._lattice.nodes[_node].update({_id2:n2})
+
+
+        '''
+            EDGES
+        '''
+
+        for n1,n2 in _a2.edges:
+            m1 = self.get_master_node(_id2, n1)
+            m2 = self.get_master_node(_id2, n2)
+            if m1 and m2:
+                ''' Create master edge if not present '''
+                if (m1,m2) not in self._lattice.edges:
+                    self._lattice.add_edge(m1,m2)
+                ''' Lastly, create new entry '''
+                self._lattice.edges[(m1,m2)].update({_id2:(n1,n2)})
+
+        return True
+
+
+
+    def RemoveFromLattice(self, _id):
+
+        if not self._mgr:
+            print('Cannot remove assembly from lattice: no assembly in manager')
+            return False
+
+        if _id not in self._mgr:
+            print('ID: ', _id)
+            print('Assembly not in manager; not proceeding')
+            return False
+
+        ''' CASE 1: Lattice only contains single assembly '''
+        if len(self._mgr) == 1:
+            for node in self._lattice:
+                self._lattice.remove_node(node)
+            return True
+
+        ''' CASE 2: Lattice has more than one assembly in it '''
+        _nodes = list(self._lattice.nodes)
+        _edges = list(self._lattice.edges)
+
+        for _edge in _edges:
+            _dict = self._lattice.edges[_edge]
+            if _id in _dict:
+                if len(_dict) == 1:
+                    self._lattice.remove_edge(_edge[0],_edge[1])
+                else:
+                    _dict.pop(_id)
+
+        for _node in _nodes:
+            _dict = self._lattice.nodes[_node]
+            if _id in _dict:
+                if len(_dict) == 1:
+                    self._lattice.remove_node(_node)
+                else:
+                    _dict.pop(_id)
+
+        return True
+
+
+
+    ''' Get node colours according to active assembly '''
+    def get_lattice_colours(self, _active = None, _selected = None):
+
+        if not hasattr(self, '_active_colour'):
+            self._active_colour = 'red'
+        if not hasattr(self, '_default_colour'):
+            self._default_colour = 'gray'
+        if not hasattr(self, '_selected_colour'):
+            self._selected_colour = 'blue'
+        c1 = self._active_colour
+        c2 = self._selected_colour
+        c3 = self._default_colour
+
+        ''' Get active assembly '''
+        if not _active:
+            _active = min(self._mgr)
+            print('No active assembly specified, got by lowest ID: ', _active)
+
+
+
+        ''' MAIN BIT '''
+
+        node_col_map = []
+        edge_col_map = []
+
+        for node in self._lattice.nodes:
+            _dict = self._lattice.nodes[node]
+            if _active in _dict:
+                if _selected and (_dict[_active] in _selected):
+                    node_col_map.append(c2)
+                else:
+                    node_col_map.append(c1)
+            else:
+                node_col_map.append(c3)
+
+        for edge in self._lattice.edges:
+            _dict = self._lattice.edges[edge]
+            if _active in _dict:
+                if _selected and (_dict[_active][0] in _selected) and (_dict[_active][1] in _selected):
+                    edge_col_map.append(c2)
+                else:
+                    edge_col_map.append(c1)
+            else:
+                edge_col_map.append(c3)
+
+        return node_col_map, edge_col_map
 
 
 
@@ -172,7 +602,6 @@ class AssemblyManager():
 
 class StepParse(nx.DiGraph):
 
-    # Override constructor to add part_level
     def __init__(self, assembly_id = None, *args, **kwargs):
 
            super().__init__(*args, **kwargs)
@@ -180,6 +609,8 @@ class StepParse(nx.DiGraph):
            self.topo_types = (TopoDS_Solid, TopoDS_Compound)
            self.assembly_id = assembly_id
            self.OCC_dict = {}
+
+
 
     @property
     def new_node_id(self):
@@ -190,68 +621,20 @@ class StepParse(nx.DiGraph):
 
 
 
-    # OVERRIDDEN METHODS TO ADD LABELS TO NODES WHEN CREATED
-    # ---
-    # Alternatively can use "set_all_labels" method below
-
-
-
-    # Overridden to add label to node upon creation
-    def add_node(self, node, text = None, label = None, **attr):
+    ''' Overridden to add label to node upon creation '''
+    def add_node(self, node, **attr):
         super().add_node(node, **attr)
-        try:
-            self.nodes[node]['text'] = self.remove_suffixes(text)
-            self.nodes[node]['label'] = self.remove_suffixes(label)
-        except:
-            pass
-            # print('Could not remove part text and/or label suffixes (.step etc.)')
 
+        kwds = ['text', 'label']
 
-
-    # HR 08/10/20: "add_node" edited, others not
-    # # Overridden to add label to node upon creation
-    # def add_node(self, node, text, label, **attr):
-    #     super().add_node(node, **attr)
-    #     self.nodes[node]['text'] = text
-    #     self.nodes[node]['label'] = label
-
-
-
-    # # Overridden to add label to node upon creation
-    # # as "add_edge" creates nodes if they don't already exist
-    # def add_edge(self, node1, node2, **attr):
-    #     super().add_edge(node1, node2, **attr)
-    #     self.nodes[node1]['label'] = node1
-    #     self.nodes[node2]['label'] = node2
-    #     # print('Adding edge {} via overridden "add_edge"'.format((node1, node2)))
-
-
-
-    # # Overridden to add label to node upon creation
-    # # Grab node list before invoking super().add_nodes_from as produces generator
-    # def add_nodes_from(self, nodes_for_adding, **attr):
-    #     node_list = [el[0] for el in list(nodes_for_adding)]
-    #     print('Node list: ', node_list)
-    #     super().add_nodes_from(node_list, **attr)
-    #     for node in node_list:
-    #         self.nodes[node]['label'] = node
-    #         print('Adding label to node ', node)
-    #     # print('Adding nodes {} via overridden "add_nodes_from"'.format(node_list))
-
-
-
-    # # Overridden to add label to node upon creation
-    # # Grab node list before invoking super().add_edges_from as produces generator
-    # def add_edges_from(self, ebunch_to_add, **attr):
-    #     edge_list = [el for el in list(ebunch_to_add)]
-    #     print('Edge list: ', edge_list)
-    #     super().add_edges_from(edge_list, **attr)
-    #     print('Edge list: ', edge_list)
-    #     for edge in edge_list:
-    #         self.nodes[edge[0]]['label'] = edge[0]
-    #         self.nodes[edge[1]]['label'] = edge[1]
-    #         print('Adding labels to nodes {} via "add_edges_from"'.format(edge))
-    #     # print('Adding edges {} via overridden "add_edges_from"'.format(edge_list))
+        for kwd in kwds:
+            if kwd in attr:
+                value = self.nodes[node][kwd]
+                if (value is not None):
+                    try:
+                        self.nodes[node][kwd] = self.remove_suffixes(value)
+                    except:
+                        pass
 
 
 
@@ -259,10 +642,10 @@ class StepParse(nx.DiGraph):
     # For use later in tree reconciliation
     def set_all_tags(self):
         for node in self.nodes:
-            if not 'tag' in self.nodes[node].keys():
+            if not 'tag' in self.nodes[node]:
                 self.nodes[node]['tag'] = node
         for edge in self.edges:
-            if not 'tag' in self.edges[edge].keys():
+            if not 'tag' in self.edges[edge]:
                 self.edges[edge]['tag'] = edge
 
 
@@ -392,6 +775,9 @@ class StepParse(nx.DiGraph):
         # Create simple parts dictionary (ref + label)
         self.part_dict     = {el[0]:el[3] for el in self.prod_all_refs}
 
+        print('Loaded STEP file')
+        self.create_tree()
+
 
 
     def create_tree(self):
@@ -428,6 +814,7 @@ class StepParse(nx.DiGraph):
 
         tree_next_layer(self, root_id)
 
+        print('Created tree')
         self.remove_redundants()
 
 
@@ -610,11 +997,6 @@ class StepParse(nx.DiGraph):
         # Map master IDs to OCC objects
         self.OCC_dict.update(dict(zip(tree_list, OCC_list)))
 
-        # print('\nOCC dict:')
-        # for k,v in self.OCC_dict.items():
-        #     print(k,v)
-        # print('\n')
-
 
 
     # Remove all single-child sub-assemblies as not compatible with lattice
@@ -639,6 +1021,8 @@ class StepParse(nx.DiGraph):
         # ...then remove in separate loop to avoid list changing size during previous loop
         for _node in _to_remove:
             self.remove_node(_node)
+
+        print('Removed redundants')
 
 
 
@@ -695,7 +1079,7 @@ class StepParse(nx.DiGraph):
 
 
 
-    def get_node_depth(self, node):
+    def node_depth(self, node):
 
         # Get depth of node(s) from root
         root = self.get_root(node)
@@ -718,7 +1102,7 @@ class StepParse(nx.DiGraph):
     #         nodes = [nodes]
 
     #     # Remove dependants from nodes list
-    #     depth_dict = {el:self.get_node_depth(el) for el in nodes}
+    #     depth_dict = {el:self.node_depth(el) for el in nodes}
     #     depth_list = sorted(list(set(depth_dict.values())))
 
     #     removed_nodes = []
@@ -840,8 +1224,6 @@ class StepParse(nx.DiGraph):
                 print('Position not found for node: ', k)
                 print('Node data: ', self.nodes[k])
 
-
-
         pos_edges = {}
         for u,v in self.edges:
             _u = self.nodes[u]
@@ -853,10 +1235,13 @@ class StepParse(nx.DiGraph):
 
 
 
+
+
     ## HR 12/05/20
     ## -----------
     ## All combinatorial ranking/unranking methods here
     ## -----------
+    ''' And all class methods'''
 
 
 
@@ -1188,9 +1573,13 @@ class StepParse(nx.DiGraph):
         ''' Loop over node1 items, which are contained in key of "_sim" '''
         for node1 in nodes1:
             _simdict = _sim[node1]
-            ''' Remove already-mapped entries node2 ID'''
+            ''' Remove already-mapped entries '''
             for _done2 in _map.values():
                 _simdict.pop(_done2, None)
+            ''' Short-circuit if _simdict empty
+                This will happen when fewer n1 than n2 '''
+            if not _simdict:
+                return _map
 
             _max = max([el for el in _simdict.values()])
             _occ = sum(value == _max for value in _simdict.values())
@@ -1334,7 +1723,6 @@ class StepParse(nx.DiGraph):
 
 
 
-
         ''' Get total similarity (i.e. sum of all measures)
             "_sim" contains each separately; [0] element is total value '''
         _totals = {k:v[0] for k,v in _sim.items()}
@@ -1415,32 +1803,33 @@ class StepParse(nx.DiGraph):
         '''
 
         ''' Get total similarity (i.e. sum of all measures), currently element [0] '''
-        # _sim_u = self.node_sim(a1, a2, _u1, _u2, weight = [1,0.25,0.5,0.1,0.1])[0]
-        _sim_u = self.node_sim(a1, a2, _u1, _u2, weight = [1,0,1,0,0])[0]
+        if _u1 and _u2:
+            _sim_u = self.node_sim(a1, a2, _u1, _u2, weight = [1,0,1,0,0])[0]
 
-        ''' First job, as in previous sections: get any easy mappings where
-            max sim value appears once, and remove from dict '''
-        _newmap = self.get_by_max(_sim_u)
-        if _newmap:
-            _mapped.update(_newmap)
+            ''' First job, as in previous sections: get any easy mappings where
+                max sim value appears once, and remove from dict '''
+            _newmap = self.get_by_max(_sim_u)
+            if _newmap:
+                _mapped.update(_newmap)
 
-        for node1 in _newmap:
-            _u1.remove(node1)
-        for node2 in _newmap.values():
-            _u2.remove(node2)
+                for node1 in _newmap:
+                    _u1.remove(node1)
+                for node2 in _newmap.values():
+                    _u2.remove(node2)
 
-        _dupenew, _simnew = self.remap_entries(_u1, _u2, _newmap, _sim_u)
-        _dupemap.update(_dupenew)
-
-
-        # ''' Next stage is to get sim groupings
-        #     i.e. where max sim value appears more than once '''
-        # _newentries = self.reform_entries(tuple(_u1), tuple(_u2), _simnew)
-        # print('New sim map by reforming: ', _newentries)
+                _dupenew, _simnew = self.remap_entries(_u1, _u2, _newmap, _sim_u)
+                _dupemap.update(_dupenew)
 
 
+                # ''' Next stage is to get sim groupings
+                #     i.e. where max sim value appears more than once '''
+                # _newentries = self.reform_entries(tuple(_u1), tuple(_u2), _simnew)
+                # print('New sim map by reforming: ', _newentries)
 
-        return _mapped, (_u1, _u2), _sim, _dupemap, _totals, _tomap, _simnew
+
+
+        # return _mapped, (_u1, _u2), _sim, _dupemap, _totals, _tomap, _simnew
+        return _mapped, (_u1, _u2)
 
 
 
