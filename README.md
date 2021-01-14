@@ -16,7 +16,7 @@ Part of the Design Configuration Spaces (DCS) project hosted by the University o
 
 Hugh Rice (HR/HPR), Tom Hazlehurst (TH) and Hau Hing Chau (HHC)
 
-January-December 2020
+January 2020-February 2021
 
 School of Mechanical Engineering  
 University of Leeds  
