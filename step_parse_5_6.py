@@ -93,6 +93,8 @@ class AssemblyManager():
         # self.new_assembly_text = 'Unnamed item'
         # self.new_part_text     = 'Unnamed item'
 
+        self.enforce_binary_default = True
+
 
 
     @property
@@ -109,6 +111,8 @@ class AssemblyManager():
         _assembly = StepParse(_assembly_id)
         self._mgr.update({_assembly_id:_assembly})
         print('Created new assembly with ID: ', _assembly_id)
+
+        _assembly.enforce_binary = self.enforce_binary_default
 
         return _assembly_id, _assembly
 
@@ -154,7 +158,8 @@ class AssemblyManager():
         '''
         Assembly-specific operations
         '''
-        self._mgr[_id].add_edge(u, v)
+        _ass = self._mgr[_id]
+        _ass.add_edge(u, v)
 
         '''
         Lattice operations
@@ -171,12 +176,14 @@ class AssemblyManager():
 
 
 
+
     def remove_edge_in_lattice(self, _id, u, v):
 
         '''
         Assembly-specific operations
         '''
-        self._mgr[_id].remove_edge(u, v)
+        _ass = self._mgr[_id]
+        _ass.remove_edge(u, v)
 
         '''
         Lattice operations
@@ -194,9 +201,20 @@ class AssemblyManager():
 
 
 
-    def add_node_in_lattice(self, _id, **attr):
+    def add_node_in_lattice(self, _id, _parent, _disaggregate = False, **attr):
 
         _ass = self._mgr[_id]
+        leaves = _ass.leaves
+
+        ''' Allow node to be added to leaf if "disaggregate" flag is true '''
+        if _parent not in leaves:
+            print('ID of node to add node to: ', _parent)
+        else:
+            if not _disaggregate:
+                print('Cannot add node: item is a leaf node/irreducible part')
+                print('To add node, disaggregate part first')
+                return
+
         _node = _ass.new_node_id
 
         '''
@@ -211,24 +229,66 @@ class AssemblyManager():
         self._lattice.add_node(_nodem)
         self._lattice.nodes[_nodem].update({_id:_node})
 
+        self.add_edge_in_lattice(_id, _parent, _node)
+
         return _node, _nodem
+
+
+
+    def enforce_binary(self, _id, _node):
+
+        _ass = self._mgr[_id]
+
+        ''' Abort if not enforced '''
+        if not _ass.enforce_binary:
+            return
+
+        _parent = _ass.get_parent(_node)
+        _children = [el for el in _ass.successors(_node)]
+
+        ''' Abort if more than one child '''
+        if not len(_children) == 1:
+            return
+
+        print('Single child; removing and linking past node')
+        print('Assembly ', _id, '; node ', _node)
+
+        ''' Reparent orphans-to-be '''
+        for _child in _children:
+            self.move_node_in_lattice(_id, _child, _parent)
+
+        ''' Finally, remove redundant node '''
+        self.remove_node_in_lattice(_id, _node)
 
 
 
     def remove_node_in_lattice(self, _id, _node):
 
         _ass = self._mgr[_id]
-        _ins = list(_ass.in_edges(_node))
-        _outs = list(_ass.out_edges(_node))
         _nm = self.get_master_node(_id, _node)
+
+        _parent = _ass.get_parent(_node)
+        _leaves = _ass.leaves
 
         '''
         NOTES
         - Order of operations is unusual here, to avoid missing edges
-        - Redundant edges are removed in lattice first
-        - Then node/edges removed in assembly
-        - Then remaining node/edge references removed in lattice dicts
+        1. Reparent (move) children, if node is sub-assembly,
+            with veto of binary enforcement (as not necessary if sub-ass)
+        2. Other redundant edges are then removed in lattice first
+        3. Then node/edges removed in assembly
+        4. Then remaining node/edge references removed in lattice dicts
+        5. Last, binary relations enforced if necessary
         '''
+
+        ''' Reparent orphans to node parent if node is sub-assembly '''
+        if _node not in _leaves:
+            orphans = [el for el in _ass.successors(_node)]
+            for orphan in orphans:
+                self.move_node_in_lattice(_id, orphan, _parent, veto_binary = True)
+
+        _ins = list(_ass.in_edges(_node))
+        _outs = list(_ass.out_edges(_node))
 
         ''' Remove now-redundant edges (lattice) '''
         _edges = _ins + _outs
@@ -248,9 +308,13 @@ class AssemblyManager():
             print('Node dict has len > 1; removing node dict entry for assembly')
             self._lattice.nodes[_nm].pop(_id)
 
+        ''' If original node is leaf, enforce binary relations if necessary '''
+        if _node in _leaves:
+            self.enforce_binary(_id, _parent)
 
 
-    def move_node_in_lattice(self, _id, _node, _parent):
+
+    def move_node_in_lattice(self, _id, _node, _parent, veto_binary = False):
 
         _ass = self._mgr[_id]
         _old_parent = _ass.get_parent(_node)
@@ -266,27 +330,23 @@ class AssemblyManager():
         ''' Create new edge '''
         self.add_edge_in_lattice(_id, _parent, _node)
 
+        ''' Enforce binary relations if necessary '''
+        if not veto_binary:
+            self.enforce_binary(_id, _old_parent)
+
         return True
 
 
 
     def assemble_in_lattice(self, _id, _nodes, **attr):
 
-        ''' Check selected items are present and suitable '''
-        if (len(_nodes) <= 1):
-            print('No or one item(s) selected')
-            return
-
-        print('Selected items to assemble:\n')
-        for _node in _nodes:
-            print('\nID = ', _node)
-
         _ass = self._mgr[_id]
 
         ''' Check root is not present in nodes '''
-        if _ass.get_root() in _nodes:
-            print('Cannot assemble: selected items include root')
-            return
+        _root = _ass.get_root()
+        if _root in _nodes:
+            _nodes.remove(_root)
+            print('Removed root from items to assemble')
 
         '''
         MAIN "ASSEMBLE" ALGORITHM
@@ -302,14 +362,13 @@ class AssemblyManager():
         print('New parent = ', new_parent)
 
         ''' Get valid ID for new node then create '''
-        new_sub, _ = self.add_node_in_lattice(_id, **attr)
-        self.add_edge_in_lattice(_id, new_parent, new_sub)
+        new_sub, _ = self.add_node_in_lattice(_id, new_parent, **attr)
 
         ''' Move all selected items to be children of new node '''
         for _node in _nodes:
             self.move_node_in_lattice(_id, _node, new_sub)
 
-        return new_parent
+        return new_sub
 
 
 
@@ -344,6 +403,8 @@ class AssemblyManager():
         for child in ch_ass:
             self.remove_node_in_lattice(_id, child)
 
+        return True
+
 
 
     def disaggregate_in_lattice(self, _id, _node, num_disagg = 2, **attr):
@@ -362,18 +423,21 @@ class AssemblyManager():
         '''
 
         ''' Get valid ID for new node then create '''
+        _new_nodes = []
         for i in range(num_disagg):
-            new_node, _ = self.add_node_in_lattice(_id, **attr)
-            self.add_edge_in_lattice(_id, _node, new_node)
+            new_node, _ = self.add_node_in_lattice(_id, _node, _disaggregate = True, **attr)
+            _new_nodes.append(new_node)
+
+        return _new_nodes
 
 
 
     def aggregate_in_lattice(self, _id, _node):
 
         _ass = self._mgr[_id]
-        leaves =_ass.leaves
+        leaves = _ass.leaves
 
-        if _node not in leaves:
+        if not _node in leaves:
             print('ID of item to aggregate = ', _node)
         else:
             print('Cannot aggregate: item is a leaf node/irreducible part\n')
@@ -384,14 +448,18 @@ class AssemblyManager():
         '''
 
         ''' Get children of node and remove '''
+        _removed_nodes = []
         ch = nx.descendants(_ass, _node)
         print('Children aggregated: ', ch)
         for child in ch:
             try:
                 self.remove_node_in_lattice(_id, child)
                 print('Removed node ', child)
+                _removed_nodes.append(child)
             except:
                 print('Could not delete node')
+
+        return _removed_nodes
 
 
 
@@ -610,6 +678,10 @@ class StepParse(nx.DiGraph):
            self.assembly_id = assembly_id
            self.OCC_dict = {}
 
+           self.default_label_part = 'Unnamed item'
+           self.default_label_ass = 'Unnamed item'
+
+           self.enforce_unary = True
 
 
     @property
@@ -635,6 +707,8 @@ class StepParse(nx.DiGraph):
                         self.nodes[node][kwd] = self.remove_suffixes(value)
                     except:
                         pass
+            else:
+                self.nodes[node][kwd] = self.default_label_part
 
 
 

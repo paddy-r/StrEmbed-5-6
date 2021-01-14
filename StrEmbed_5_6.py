@@ -1583,6 +1583,8 @@ class MainWindow(wx.Frame):
                 self.Bind(wx.EVT_MENU, self.OnAggregate, menu_item)
                 menu_item = menu.Append(wx.ID_ANY, 'Add node', 'Add node to assembly')
                 self.Bind(wx.EVT_MENU, self.OnAddNode, menu_item)
+                menu_item = menu.Append(wx.ID_ANY, 'Remove sub-assembly', 'Remove sub-assembly')
+                self.Bind(wx.EVT_MENU, self.OnRemoveNode, menu_item)
                 # Sorting options
                 menu_text = 'Sort children alphabetically'
                 menu_item = menu.Append(wx.ID_ANY, menu_text, menu_text)
@@ -2184,8 +2186,8 @@ class MainWindow(wx.Frame):
 
     def UpdateListSelections(self, id_):
 
-        # Select/deselect parts list item
-        # With "select = True", SelectItem toggles state if multiple selections enabled
+        ''' Select/deselect parts list item
+            With "select = True", SelectItem toggles state if multiple selections enabled '''
         self._active.partTree_ctc.SelectItem(self._active.ctc_dict[id_], select = True)
 
 
@@ -2220,108 +2222,48 @@ class MainWindow(wx.Frame):
 
         selected_items = self.selected_items
 
-        # Check selected items are present and suitable
-        if not selected_items:
-            print('No items selected')
+        ''' Check selected items are present and suitable '''
+        if (len(selected_items) <= 1):
+            print('No or one item(s) selected')
             return
 
-        # Further checks
-        if len(selected_items) > 1:
-            print('Selected items to assemble:\n')
-            for id_ in selected_items:
-                print('\nID = ', id_)
-        else:
-            print('Cannot assemble: fewer than two items selected\n')
+        _page = self._notebook.GetPage(self._notebook.GetSelection())
+        _assembly_id = self._notebook_manager[_page]
+        _parent = self._assembly_manager.assemble_in_lattice(_assembly_id, selected_items)
+        if not _parent:
+            print('Could not assemble')
             return
 
-        # Check root is not present in selected items
-        if self.assembly.get_root() in selected_items:
-            print('Cannot assemble: selected items include root')
-            return
-
-
-
-        # MAIN "ASSEMBLE" ALGORITHM
-        # ---
-        # Get selected item that is highest up tree (i.e. lowest depth)
-        depths = {}
-        for id_ in selected_items:
-            depths[id_] = self.assembly.node_depth(id_)
-            print('ID = ', id_, '; parent depth = ', depths[id_])
-        highest_node = min(depths, key = depths.get)
-        new_parent = self.assembly.get_parent(highest_node)
-        print('New parent = ', new_parent)
-
-        # Get valid ID for new node then create
-        new_id = self.assembly.new_node_id
-        text = self.new_assembly_text
-        self.assembly.add_node(new_id, text = text, label = text)
-        self.assembly.add_edge(new_parent, new_id)
-
-        # Move all selected items to be children of new node
-        for id_ in selected_items:
-            self.assembly.move_node(id_, new_id)
-
-        # Propagate changes
+        ''' Propagate changes '''
         self.ClearGUIItems()
         self.OnTreeCtrlChanged()
         self.Update3DView()
 
 
 
-    def OnFlatten(self, event):
+    def OnFlatten(self, event = None):
 
         selected_items = self.selected_items
 
-        # Check selected items are present and suitable
+        ''' Check selected items are present and suitable '''
         if not selected_items:
             print('No items selected')
             return
 
-        leaves = self.assembly.leaves
-
-        # Further checks
         if len(selected_items) == 1:
-            id_ = selected_items[-1]
-            if id_ not in leaves:
-                print('ID of item to flatten = ', id_)
-            else:
-                print('Cannot flatten: item is a leaf node/irreducible part\n')
-                return
+            node = selected_items[-1]
         else:
-            print('Cannot flatten: more than one item selected\n')
+            print('Cannot flatten: no/more than one item(s) selected')
             return
 
-
-
-        # MAIN "FLATTEN" ALGORITHM
-        # ---
-        # Get all children of item
-        # children_ = nx.descendants(self.assembly, id_)
-        # children_parts = [el for el in children_ if el in leaves]
-        # print('Children parts = ', children_parts)
-        # children_ass = [el for el in children_ if not el in leaves]
-        # print('Children assemblies = ', children_ass)
-
-        # # Move all children that are indivisible parts
-        # for child in children_parts:
-        #     self.assembly.move_node(child, id_)
-
-        # # Delete all children that are assemblies
-        # for child in children_ass:
-        #     successors = self.assembly.successors(child)
-        #     parent     = self.assembly.get_parent(child)
-        #     # self._active.discarded.add_node(child)
-        #     # # Add immediate children to data of discarded node for future reconstruction
-        #     # self._active.discarded.nodes[child]['flatten_children'] = successors
-        #     # self._active.discarded.nodes[child]['flatten_parent']   = parent
-        #     # self.assembly.remove_node(child)
         _page = self._notebook.GetPage(self._notebook.GetSelection())
         _assembly_id = self._notebook_manager[_page]
-        self._assembly_manager.flatten_in_lattice(_assembly_id, id_)
+        _done = self._assembly_manager.flatten_in_lattice(_assembly_id, node)
+        if not _done:
+            print('Could not flatten')
+            return
 
-
-        # Propagate changes
+        ''' Propagate changes '''
         self.ClearGUIItems()
         self.OnTreeCtrlChanged()
 
@@ -2331,40 +2273,25 @@ class MainWindow(wx.Frame):
 
         selected_items = self.selected_items
 
-        # Check selected items are present and suitable
+        ''' Check selected items are present and suitable '''
         if not selected_items:
             print('No items selected')
             return
 
-        leaves = self.assembly.leaves
-
-        # Further checks
         if len(selected_items) == 1:
-            id_ = selected_items[-1]
-            if id_ in leaves:
-                print('ID of item to disaggregate = ', id_)
-            else:
-                print('Cannot disaggregate: item is not a leaf node/irreducible part\n')
-                return
+            node = selected_items[-1]
         else:
-            print('Cannot disaggregate: no or more than one item selected\n')
+            print('Cannot disaggregate: no/more than one item(s) selected')
             return
 
+        _page = self._notebook.GetPage(self._notebook.GetSelection())
+        _assembly_id = self._notebook_manager[_page]
+        _new_nodes = self._assembly_manager.disaggregate_in_lattice(_assembly_id, node)
+        if not _new_nodes:
+            print('Could not disaggregate')
+            return
 
-
-        # MAIN "DISAGGREGATE" ALGORITHM
-        # ---
-        # Get valid ID for new node then create
-        no_disagg = 2
-        for i in range(no_disagg):
-            new_id   = self.assembly.new_node_id
-            text = self.new_part_text
-            self.assembly.add_node(new_id, text = text, label = text)
-            self.assembly.add_edge(id_, new_id)
-
-            print('New assembly ID = ', new_id)
-
-        # Propagate changes
+        ''' Propagate changes '''
         self.ClearGUIItems()
         self.OnTreeCtrlChanged()
         self.Update3DView()
@@ -2375,44 +2302,25 @@ class MainWindow(wx.Frame):
 
         selected_items = self.selected_items
 
-        # Check selected items are present and suitable
+        ''' Check selected items are present and suitable '''
         if not selected_items:
             print('No items selected')
             return
 
-        leaves = self.assembly.leaves
-
-        # Further checks
         if len(selected_items) == 1:
-            id_ = selected_items[-1]
-            if id_ not in leaves:
-                print('ID of item to aggregate = ', id_)
-            else:
-                print('Cannot aggregate: item is a leaf node/irreducible part\n')
-                return
+            node = selected_items[-1]
         else:
-            print('Cannot aggregate: more than one item selected\n')
+            print('Cannot aggregate: no/more than one item(s) selected')
             return
 
+        _page = self._notebook.GetPage(self._notebook.GetSelection())
+        _assembly_id = self._notebook_manager[_page]
+        _removed_nodes = self._assembly_manager.aggregate_in_lattice(_assembly_id, node)
+        if not _removed_nodes:
+            print('Could not aggregate')
+            return
 
-
-        # MAIN "AGGREGATE" ALGORITHM
-        # ---
-        # Get children of node and remove
-        children_ = [el for el in self.assembly.successors(id_)]
-        print('Children aggregated: ', children_)
-        for child in children_:
-            # Get subgraph and add recreate in discard pile
-            subgraph = nx.dfs_tree(self.assembly, child)
-            # self._active.discarded.add_nodes_from(subgraph.nodes)
-            # self._active.discarded.add_edges_from(subgraph.edges)
-            ## Delete from assembly
-            self.assembly.remove_nodes_from(subgraph.nodes)
-
-        # Add list of children IDs as data for future reference
-        self.assembly.nodes[id_]['aggregated'] = children_
-
-        # Propagate changes
+        ''' Propagate changes '''
         self.ClearGUIItems()
         self.OnTreeCtrlChanged()
         self.Update3DView()
@@ -2423,42 +2331,25 @@ class MainWindow(wx.Frame):
 
         selected_items = self.selected_items
 
-        # Check selected items are present and suitable
+        ''' Check selected items are present and suitable '''
         if not selected_items:
             print('No items selected')
             return
 
-        leaves = self.assembly.leaves
-
-        # Further checks
         if len(selected_items) == 1:
-            # id_ = self._active.ctc_dict_inv[selected_items[-1]]
-            # if id_ not in leaves:
-            #     print('ID of item to add node to = ', id_)
-            id_ = selected_items[-1]
-            if id_ not in leaves:
-                print('ID of items to add not to = ', id_)
-            else:
-                print('Cannot add node: item is a leaf node/irreducible part\n')
-                print('To add node, disaggregate part first\n')
-                return
+            node = selected_items[-1]
         else:
-            print('Cannot add node: more than one item selected\n')
+            print('Cannot add node: no/more than one item(s) selected')
             return
 
+        _page = self._notebook.GetPage(self._notebook.GetSelection())
+        _assembly_id = self._notebook_manager[_page]
+        _new_node = self._assembly_manager.add_node_in_lattice(_assembly_id, node)
+        if not _new_node:
+            print('Could not add node')
+            return
 
-
-        # MAIN "ADD NODE" ALGORITHM
-        # ---
-        # Create new node with selected item as parent
-        new_id = self.assembly.new_node_id
-        text = self.new_part_text
-        self.assembly.add_node(new_id, text = text, label = text)
-        self.assembly.add_edge(id_, new_id)
-
-        print('New node ID = ', new_id)
-
-        # Propagate changes
+        ''' Propagate changes '''
         self.ClearGUIItems()
         self.OnTreeCtrlChanged()
         self.Update3DView()
@@ -2469,21 +2360,21 @@ class MainWindow(wx.Frame):
 
         selected_items = self.selected_items
 
-        # Check selected items are present and suitable
+        ''' Check selected items are present and suitable '''
         if not selected_items:
             print('No items selected')
             return
 
-        # Further checks
+        ''' Further checks '''
         if len(selected_items) >= 1:
             print('Selected item(s) to remove:\n')
-            for id_ in selected_items:
-                print('ID = ', id_)
+            for node in selected_items:
+                print('ID = ', node)
         else:
             print('Cannot remove: no items selected\n')
             return
 
-        # Check root is not present in selected items
+        ''' Check root is not present in selected items '''
         _root = self.assembly.get_root()
         if _root in selected_items:
             if len(selected_items) == 1:
@@ -2495,44 +2386,18 @@ class MainWindow(wx.Frame):
 
 
 
-        # MAIN "REMOVE NODE" ALGORITHM
-        # ---
-
-        ## Get all non-connected nodes in list...
-        # dependants_removed = self.assembly.remove_dependants_from(selected_items)
-        # # ...then create subtree and copy it to discard pile...
-        # for node in dependants_removed:
-        #     subgraph = nx.dfs_tree(self.assembly, node)
-        #     parent   = self.assembly.get_parent(node)
-        #     # self._active.discarded.add_nodes_from(subgraph.nodes)
-        #     # self._active.discarded.add_edges_from(subgraph.edges)
-        #     # # ... retaining head-parent data for future reconstruction...
-        #     # self._active.discarded.nodes[node]['remove_parent'] = parent
-        #     # ...then remove subtree from main assembly
-        #     self.assembly.remove_nodes_from(subgraph.nodes)
-
-
-        #     # And lastly, if only one remaining sibling, remove it as redundant
-        #     # N.B. No need to track back up through parents and remove redundant nodes...
-        #     # ...if they are thus created, as this is done by "remove_redundant_nodes"...
-        #     # ...when entire tree is redrawn via "OnTreeCtrlChanged"...
-        #     # ---
-        #     # ...but it WOULD be necessary if it weren't redrawn in full
-        #     siblings = [el for el in self.assembly.successors(parent)]
-        #     print('Removed all user-specified nodes')
-        #     print('Remaining siblings: ', siblings)
-        #     if len(siblings) == 1:
-        #         print('Removing single remaining sibling as redundant nodes not allowed')
-        #         self.assembly.remove_node(siblings[-1])
-
+        ''' MAIN "REMOVE NODE" ALGORITHM
+        '''
+        _page = self._notebook.GetPage(self._notebook.GetSelection())
+        _assembly_id = self._notebook_manager[_page]
         for node in selected_items:
             try:
-                self.assembly.remove_node_and_dependants(node)
-                print('Removed node: ', node)
+                self._assembly_manager.remove_node_in_lattice(_assembly_id, node)
             except:
-                print('Could not remove node, may already have been removed: ', node)
+                print('Could not remove node ', node, ' as not present; may have been removed already')
 
-        # Propagate changes
+
+        ''' Propagate changes '''
         self.ClearGUIItems()
         self.OnTreeCtrlChanged()
         self.Update3DView()
@@ -2542,8 +2407,7 @@ class MainWindow(wx.Frame):
 
     def sort_check(self):
 
-        # Check only one non-part item selected
-        # ---
+        ''' Check only one non-part item selected '''
         if not self.assembly.nodes:
             print('No assembly present')
             return
@@ -2562,7 +2426,7 @@ class MainWindow(wx.Frame):
             print('Cannot sort: item has single child')
             return
 
-        # If all checks above passed...
+        '''' If all checks above passed... '''
         return True
 
 
@@ -2728,7 +2592,7 @@ class MainWindow(wx.Frame):
         if text_before != text_:
             id_ = self._active.ctc_dict_inv[item_]
             self.assembly.nodes[id_]['text'] = text_
-        print('Text changed to:', item_.GetText())
+            print('Text changed to:', item_.GetText())
 
 
 
