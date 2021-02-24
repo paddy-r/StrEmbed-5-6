@@ -35,7 +35,7 @@ import re
 import nltk
 
 import numpy as np
-from scipy.special import comb
+from scipy.special import comb, binom
 # from math import log
 
 # # For powerset construction
@@ -48,6 +48,9 @@ from scipy.special import comb
 
 # Import networkx for plotting lattice
 import networkx as nx
+
+''' MPL for default viewer if run outside GUI '''
+import matplotlib as mpl
 
 #TH: useful for working with files
 import os
@@ -81,19 +84,62 @@ from OCC.Core.BRepBuilderAPI import BRepBuilderAPI_Transform
 
 
 
-
-
 ''' To contain lattice structure that manages/contains all assemblies '''
 class AssemblyManager():
 
-    def __init__(self, *args, **kwargs):
-        self._mgr= {}
+    def __init__(self, viewer = None, axes = None, ic = None, dc = None, sc = None, lc = None, lattice_plot_mode = True, *args, **kwargs):
+        self._mgr = {}
         self._lattice = StepParse('lattice')
 
         # self.new_assembly_text = 'Unnamed item'
         # self.new_part_text     = 'Unnamed item'
 
-        self.enforce_binary_default = True
+        self.ENFORCE_BINARY_DEFAULT = True
+
+        '''
+            Set up lattice plot viewer
+            Default is MPL viewer
+        '''
+        if viewer:
+            self.viewer = viewer
+        else:
+            self.viewer = mpl.pyplot.figure()
+        if axes:
+            self.axes = axes
+        else:
+            self.axes = self.viewer.add_subplot(111)
+
+        ''' Turn off all axis lines and ticks '''
+        self.axes.axis('off')
+        self.axes.axes.get_xaxis().set_ticks([])
+        self.axes.axes.get_yaxis().set_ticks([])
+
+        self._lattice.origin = (0,0)
+
+        self.lattice_plot_mode = lattice_plot_mode
+
+        ''' Set up colouring '''
+        self.INACTIVE_COLOUR_DEFAULT = 'darkgray'
+        self.DEFAULT_COLOUR_DEFAULT = 'red'
+        self.SELECTED_COLOUR_DEFAULT = 'blue'
+        self.LINE_COLOUR_DEFAULT = 'lightgray'
+
+        if not ic:
+            self.ic = self.INACTIVE_COLOUR_DEFAULT
+        else:
+            self.ic = ic
+        if not dc:
+            self.dc = self.DEFAULT_COLOUR_DEFAULT
+        else:
+            self.dc = dc
+        if not sc:
+            self.sc = self.SELECTED_COLOUR_DEFAULT
+        else:
+            self.sc = sc
+        if not lc:
+            self.lc = self.LINE_COLOUR_DEFAULT
+        else:
+            self.lc = lc
 
 
 
@@ -112,7 +158,7 @@ class AssemblyManager():
         self._mgr.update({_assembly_id:_assembly})
         print('Created new assembly with ID: ', _assembly_id)
 
-        _assembly.enforce_binary = self.enforce_binary_default
+        _assembly.enforce_binary = self.ENFORCE_BINARY_DEFAULT
 
         return _assembly_id, _assembly
 
@@ -121,6 +167,8 @@ class AssemblyManager():
     def remove_assembly(self, _id):
         if _id in self._mgr:
             print('Assembly ', _id, 'found in and removed from manager')
+            ''' Try and remove from lattice '''
+            self.RemoveFromLattice(_id)
             self._mgr.pop(_id)
             return True
         else:
@@ -241,6 +289,7 @@ class AssemblyManager():
 
         ''' Abort if not enforced '''
         if not _ass.enforce_binary:
+            print('Not enforcing binary relations; disallowed for assembly ', _id)
             return
 
         _parent = _ass.get_parent(_node)
@@ -318,6 +367,9 @@ class AssemblyManager():
 
         _ass = self._mgr[_id]
         _old_parent = _ass.get_parent(_node)
+
+        if _old_parent == _parent:
+            return
 
         ''' Check if is root, i.e. has no parent '''
         if (_old_parent is None):
@@ -484,6 +536,7 @@ class AssemblyManager():
             No need to do any similarity calculations '''
         if len(self._mgr) == 1:
 
+            print('Adding first assembly to lattice')
             _a1 = self._mgr[_id]
 
             for node in _a1.nodes:
@@ -538,7 +591,6 @@ class AssemblyManager():
         _map = results[0]
         _u1, _u2 = results[1]
 
-
         '''
             NODES
         '''
@@ -589,7 +641,9 @@ class AssemblyManager():
 
         ''' CASE 1: Lattice only contains single assembly '''
         if len(self._mgr) == 1:
-            for node in self._lattice:
+            nodes = [node for node in self._lattice.nodes]
+            ''' Edges will be removed automatically when their nodes are removed '''
+            for node in nodes:
                 self._lattice.remove_node(node)
             return True
 
@@ -600,71 +654,184 @@ class AssemblyManager():
         for _edge in _edges:
             _dict = self._lattice.edges[_edge]
             if _id in _dict:
-                if len(_dict) == 1:
+                ''' Remove entry for assembly in lattice dict... '''
+                _dict.pop(_id)
+                if not any(ass in _dict for ass in self._mgr):
+                    ''' ...and remove entirely if no other assemblies in dict '''
                     self._lattice.remove_edge(_edge[0],_edge[1])
-                else:
-                    _dict.pop(_id)
 
         for _node in _nodes:
             _dict = self._lattice.nodes[_node]
             if _id in _dict:
-                if len(_dict) == 1:
+                ''' Remove entry for assembly in lattice dict... '''
+                _dict.pop(_id)
+                if not any(ass in _dict for ass in self._mgr):
+                    ''' ...and remove entirely if no other assemblies in dict '''
                     self._lattice.remove_node(_node)
-                else:
-                    _dict.pop(_id)
 
         return True
 
 
 
-    ''' Get node colours according to active assembly '''
-    def get_lattice_colours(self, _active = None, _selected = None):
+    ''' Create all plot objects from scratch '''
+    def create_plot_elements(self):
 
-        if not hasattr(self, '_active_colour'):
-            self._active_colour = 'red'
-        if not hasattr(self, '_default_colour'):
-            self._default_colour = 'gray'
-        if not hasattr(self, '_selected_colour'):
-            self._selected_colour = 'blue'
-        c1 = self._active_colour
-        c2 = self._selected_colour
-        c3 = self._default_colour
+        latt = self._lattice
+        pos = latt.get_positions()
 
-        ''' Get active assembly '''
-        if not _active:
-            _active = min(self._mgr)
-            print('No active assembly specified, got by lowest ID: ', _active)
+        # dc = self.dc
+        # sc = self.sc
+        lc = self.lc
+        ic = self.ic
 
+        ''' Bodge to set nodes/edges to one colour
+            then recolour later (as most will not be selected, so quick) '''
+        c = ic
 
+        latt.line_dict = {}
+        latt.node_dict = {}
+        latt.edge_dict = {}
 
-        ''' MAIN BIT '''
-
-        node_col_map = []
-        edge_col_map = []
-
-        for node in self._lattice.nodes:
-            _dict = self._lattice.nodes[node]
-            if _active in _dict:
-                if _selected and (_dict[_active] in _selected):
-                    node_col_map.append(c2)
-                else:
-                    node_col_map.append(c1)
+        ''' Draw outline of each (populated) level, with end points '''
+        for k,v in latt.S_p.items():
+            if v <= 1:
+                line_pos = 0
             else:
-                node_col_map.append(c3)
+                line_pos = np.log(v-1)
+            latt.line_dict[k] = self.axes.plot([-0.5*line_pos, 0.5*line_pos], [k, k], c = lc, marker = 'o', mfc = lc, mec = lc, zorder = -1)
 
-        for edge in self._lattice.edges:
-            _dict = self._lattice.edges[edge]
-            if _active in _dict:
-                if _selected and (_dict[_active][0] in _selected) and (_dict[_active][1] in _selected):
-                    edge_col_map.append(c2)
-                else:
-                    edge_col_map.append(c1)
-            else:
-                edge_col_map.append(c3)
+        ''' Draw nodes '''
+        for node in latt.nodes:
+            latt.node_dict[node] = self.axes.scatter(pos[node][0], pos[node][1], c = c, zorder = 1)
 
-        return node_col_map, edge_col_map
+        ''' Draw edges '''
+        for u,v in latt.edges:
+            latt.edge_dict[(u,v)] = self.axes.plot([pos[u][0], pos[v][0]], [pos[u][1], pos[v][1]], c = c, zorder = 0)[0] # [0] index to get single list item
+
+        ''' Create edges b/t infimum and leaves '''
+        origin = latt.origin
+        ''' Here set v in edge (u,v) to None if v is infimum '''
+        for leaf in latt.leaves:
+            latt.edge_dict[(leaf,None)] = self.axes.plot([origin[0], pos[leaf][0]], [origin[1], pos[leaf][1]], c = c, zorder = 0)[0] # [0] index to get single list item
 
 
+
+        ''' Minimise white space around plot in panel '''
+        self.viewer.subplots_adjust(left = 0.01, bottom = 0.01, right = 0.99, top = 0.99)
+
+        self.axes.axes.axis('off')
+        self.axes.axes.get_xaxis().set_ticks([])
+        self.axes.axes.get_yaxis().set_ticks([])
+
+
+
+    def update_colours_selected(self, active, selected = [], to_select = [], to_unselect = []):
+
+        selected = [self.get_master_node(active, node) for node in selected]
+        to_select = [self.get_master_node(active, node) for node in to_select]
+        to_unselect = [self.get_master_node(active, node) for node in to_unselect]
+
+        print('selected: ', selected)
+        print('to_select: ', to_select)
+        print('to_unselect: ', to_unselect)
+
+        dc = self.dc
+        sc = self.sc
+
+        latt = self._lattice
+        leaves = latt.leaves
+
+        ''' Selections '''
+        for node in to_select:
+            ''' Nodes '''
+            latt.node_dict[node].set_facecolor(sc)
+            ''' Edges '''
+            for u,v in latt.in_edges(node):
+                if (u in selected) or (u in to_select):
+                    latt.edge_dict[(u,v)].set_color(sc)
+            for u,v in latt.out_edges(node):
+                if (v in selected) or (v in to_select):
+                    latt.edge_dict[(u,v)].set_color(sc)
+
+        ''' Deselections '''
+        for node in to_unselect:
+            ''' Nodes '''
+            latt.node_dict[node].set_facecolor(dc)
+            ''' Edges '''
+            for u,v in latt.in_edges(node):
+                if u in selected:
+                    latt.edge_dict[(u,v)].set_color(dc)
+            for u,v in latt.out_edges(node):
+                if v in selected:
+                    latt.edge_dict[(u,v)].set_color(dc)
+
+        ''' Edges from leaves to infimum '''
+        to_select_leaves = [el for el in to_select if el in leaves]
+        to_unselect_leaves = [el for el in to_unselect if el in leaves]
+        ''' Selections '''
+        for leaf in to_select_leaves:
+            latt.edge_dict[(leaf,None)].set_color(sc)
+        ''' Deselections '''
+        for leaf in to_unselect_leaves:
+            latt.edge_dict[(leaf,None)].set_color(dc)
+
+
+
+        ''' Minimise white space around plot in panel '''
+        self.viewer.subplots_adjust(left = 0.01, bottom = 0.01, right = 0.99, top = 0.99)
+
+        self.axes.axes.axis('off')
+        self.axes.axes.get_xaxis().set_ticks([])
+        self.axes.axes.get_yaxis().set_ticks([])
+
+
+
+    def update_colours_active(self, to_activate = [], to_deactivate = []):
+
+        latt = self._lattice
+        nodes = latt.nodes
+        edges = latt.edges
+        leaves = latt.leaves
+
+        ic = self.ic
+        dc = self.dc
+
+        ''' Nodes '''
+        for node in nodes:
+            _dict = nodes[node]
+            # ''' Activate '''
+            if any(el in to_activate for el in _dict):
+                latt.node_dict[node].set_facecolor(dc)
+            # ''' Deactivate '''
+            elif any(el in to_deactivate for el in _dict):
+                latt.node_dict[node].set_facecolor(ic)
+
+        ''' Edges '''
+        for edge in edges:
+            _dict = edges[edge]
+            # ''' Activate '''
+            if any(el in to_activate for el in _dict):
+                latt.edge_dict[edge].set_color(dc)
+            # ''' Deactivate '''
+            elif any(el in to_deactivate for el in _dict):
+                latt.edge_dict[edge].set_color(ic)
+
+        ''' Edges from leaves to infimum '''
+        for leaf in leaves:
+            _dict = nodes[node]
+            if any(el in to_activate for el in _dict):
+                latt.edge_dict[(leaf,None)].set_color(dc)
+            elif any(el in to_deactivate for el in _dict):
+                latt.edge_dict[(leaf,None)].set_color(ic)
+
+
+
+        ''' Minimise white space around plot in panel '''
+        self.viewer.subplots_adjust(left = 0.01, bottom = 0.01, right = 0.99, top = 0.99)
+
+        self.axes.axes.axis('off')
+        self.axes.axes.get_xaxis().set_ticks([])
+        self.axes.axes.get_yaxis().set_ticks([])
 
 
 
@@ -687,7 +854,7 @@ class StepParse(nx.DiGraph):
     @property
     def new_node_id(self):
         if not hasattr(self, 'id_counter'):
-            self.id_counter = 0
+            self.id_counter = 100
         self.id_counter += 1
         return self.id_counter
 
@@ -707,13 +874,22 @@ class StepParse(nx.DiGraph):
                         self.nodes[node][kwd] = self.remove_suffixes(value)
                     except:
                         pass
-            else:
-                self.nodes[node][kwd] = self.default_label_part
+            # else:
+            #     self.nodes[node][kwd] = self.default_label_part
 
 
 
-    # Set node and edge labels to node identifier
-    # For use later in tree reconciliation
+    def print_all_items(self):
+        print('\nAll nodes and edges:')
+        for node in self.nodes:
+            print(node, self.nodes[node])
+        for edge in self.edges:
+            print(edge, self.edges[edge])
+
+
+
+    ''' Set node and edge labels to node identifier
+        For use later in tree reconciliation '''
     def set_all_tags(self):
         for node in self.nodes:
             if not 'tag' in self.nodes[node]:
@@ -878,13 +1054,12 @@ class StepParse(nx.DiGraph):
             root_node = self.step_dict[parent]
             for line in self.nauo_refs:
                 if line[1] == root_node:
-                    # i[0] += 1
-                    _id = self.new_node_id
-                    self.step_dict[_id] = str(line[2])
-                    text = self.part_dict[self.step_dict[_id]]
-                    self.add_node(_id, text = text, label = text)
-                    self.add_edge(parent, _id)
-                    tree_next_layer(self, _id)
+                    node = self.new_node_id
+                    self.step_dict[node] = str(line[2])
+                    text = self.part_dict[self.step_dict[node]]
+                    self.add_node(node, text = text, label = text)
+                    self.add_edge(parent, node)
+                    tree_next_layer(self, node)
 
         tree_next_layer(self, root_id)
 
@@ -902,22 +1077,22 @@ class StepParse(nx.DiGraph):
         Copyright info below
         """
 
-        ##Copyright 2018 Thomas Paviot (tpaviot@gmail.com)
-        ##
-        ##This file is part of pythonOCC.
-        ##
-        ##pythonOCC is free software: you can redistribute it and/or modify
-        ##it under the terms of the GNU Lesser General Public License as published by
-        ##the Free Software Foundation, either version 3 of the License, or
-        ##(at your option) any later version.
-        ##
-        ##pythonOCC is distributed in the hope that it will be useful,
-        ##but WITHOUT ANY WARRANTY; without even the implied warranty of
-        ##MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-        ##GNU Lesser General Public License for more details.
-        ##
-        ##You should have received a copy of the GNU Lesser General Public License
-        ##along with pythonOCC.  If not, see <http://www.gnu.org/licenses/>.
+        # Copyright 2018 Thomas Paviot (tpaviot@gmail.com)
+        
+        # This file is part of pythonOCC.
+        
+        # pythonOCC is free software: you can redistribute it and/or modify
+        # it under the terms of the GNU Lesser General Public License as published by
+        # the Free Software Foundation, either version 3 of the License, or
+        # (at your option) any later version.
+        
+        # pythonOCC is distributed in the hope that it will be useful,
+        # but WITHOUT ANY WARRANTY; without even the implied warranty of
+        # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+        # GNU Lesser General Public License for more details.
+        
+        # You should have received a copy of the GNU Lesser General Public License
+        # along with pythonOCC.  If not, see <http://www.gnu.org/licenses/>.
 
         ''' Changed to odict to allow direct mapping to step_dict (see later) '''
         output_shapes = odict()
@@ -1050,49 +1225,50 @@ class StepParse(nx.DiGraph):
                 print('Root item: ', root_item)
                 _get_sub_shapes(root_item, None)
 
-        # HR 15/7/20
-        #
-        # Want to link existing node IDs from create_tree() with OCC
-        # First try: assume file-read order is same for both...
-        # ...and also OCC only gets "simple parts", i.e. leaves...
-        # ...which is corrected for below
-        #
-        # MUST CORRECT IN FUTURE TO BE SINGLE FILE-READ METHOD...
-        # ...FOR BOTH GRAPH AND OCC/SHAPE DATA
+        '''
+        HR 15/7/20
+        ----------
+        Want to link existing node IDs from create_tree() with OCC
+        Assumes file-read order is same for both...
+        ...and also OCC only gets "simple parts", i.e. leaves...
+        ...which is corrected for below
+
+        MUST CORRECT IN FUTURE TO BE SINGLE FILE-READ METHOD...
+        ...FOR BOTH GRAPH AND OCC/SHAPE DATA '''
 
         _get_shapes()
         self.shapes = output_shapes
         # return self.output_shapes
-        # Get all TopoDS_Solid objects in OCC dict
-        OCC_list  = [k for k in self.shapes.keys() if type(k) in self.topo_types]
-        # Get all leaves in step_dict (could also just get list from leaves method)
-        tree_list = [k for k in self.step_dict.keys() if k in self.leaves]
+        ''' Get all TopoDS_Solid objects in OCC dict '''
+        OCC_list  = [k for k in self.shapes if type(k) in self.topo_types]
+        '''' Get all leaves in step_dict (could also just get list from leaves method) '''
+        tree_list = [k for k in self.step_dict if k in self.leaves]
 
-        # Map master IDs to OCC objects
+        ''' Map master IDs to OCC objects '''
         self.OCC_dict.update(dict(zip(tree_list, OCC_list)))
 
 
 
-    # Remove all single-child sub-assemblies as not compatible with lattice
+    ''' Remove all single-child sub-assemblies as not compatible with lattice '''
     def remove_redundants(self, _tree = None):
 
-        # Operate on whole tree by default
+        ''' Operate on whole tree by default '''
         if not _tree:
             _tree = self.nodes
 
-        # Get list of redundant nodes and link past them...
+        ''' Get list of redundant nodes and link past them... '''
         _to_remove = []
         for _node in _tree:
             if self.out_degree(_node) == 1:
                 _parent = self.get_parent(_node)
                 _child  = self.get_child(_node)
-                # Don't remove if at head of tree (i.e. if in_degree == 0)...
-                # ...as Networkx would create new "None" node as parent
+                ''' Don't remove if at head of tree (i.e. if in_degree == 0)...
+                    ...as Networkx would create new "None" node as parent '''
                 if self.in_degree(_node) != 0:
                     self.add_edge(_parent, _child)
                 _to_remove.append(_node)
 
-        # ...then remove in separate loop to avoid list changing size during previous loop
+        ''' ...then remove in separate loop to avoid list changing size during previous loop '''
         for _node in _to_remove:
             self.remove_node(_node)
 
@@ -1100,12 +1276,12 @@ class StepParse(nx.DiGraph):
 
 
 
-    # Finds root of graph containing reference node, which is passed for speed;
-    # otherwise start with first in node list (as any random one will do)
+    ''' Finds root of graph containing reference node, which is passed for speed;
+        otherwise start with first in node list (as any random one will do) '''
     def get_root(self, node = None):
 
         # root = [el for el in self.nodes if self.in_degree(el) == 0][0]
-        # Get random node if none given
+        ''' Get random node if none given '''
         if node is None:
             node = list(self.nodes)[0]
 
@@ -1123,7 +1299,7 @@ class StepParse(nx.DiGraph):
 
     def get_parent(self, node):
 
-        # Get parent of node; return None if parent not present
+        ''' Get parent of node; return None if parent not present '''
         parent = [el for el in self.predecessors(node)]
         if parent:
             return parent[-1]
@@ -1134,8 +1310,8 @@ class StepParse(nx.DiGraph):
 
     def get_child(self, node):
 
-        # Get (single) child of node; return None if parent not present
-        # Best used only when removing redundant (i.e. single-child) subassemblies
+        ''' Get (single) child of node; return None if parent not present
+            Best used only when removing redundant (i.e. single-child) subassemblies '''
         child = [el for el in self.successors(node)]
         if child:
             return child[-1]
@@ -1147,7 +1323,7 @@ class StepParse(nx.DiGraph):
     @property
     def leaves(self):
 
-        # Get leaf nodes
+        ''' Get leaf nodes '''
         leaves = {el for el in self.nodes if self.out_degree(el) == 0}
         return leaves
 
@@ -1155,7 +1331,7 @@ class StepParse(nx.DiGraph):
 
     def node_depth(self, node):
 
-        # Get depth of node(s) from root
+        ''' Get depth of node(s) from root '''
         root = self.get_root(node)
         depth = nx.shortest_path_length(self, root, node)
         return depth
@@ -1170,152 +1346,103 @@ class StepParse(nx.DiGraph):
 
 
 
-    # def remove_dependants_from(self, nodes):
+    '''
+    HR 15/01/21
+    New method(s) to fetch "parts in" and node positions, rather than set them
+    '''
 
-    #     if type(nodes) == int:
-    #         nodes = [nodes]
+    ''' Generate set of parts contained by node(s); node list optional argument '''
+    def get_leaves_in(self, _nodes = None):
 
-    #     # Remove dependants from nodes list
-    #     depth_dict = {el:self.node_depth(el) for el in nodes}
-    #     depth_list = sorted(list(set(depth_dict.values())))
-
-    #     removed_nodes = []
-    #     for depth in depth_list:
-    #         at_depth    = [k for k,v in depth_dict.items() if v == depth]
-    #         above_depth = [k for k,v in depth_dict.items() if v < depth]
-    #         to_check    = list(set(nodes) - set(removed_nodes) - set(at_depth) - set(above_depth))
-    #         for node in at_depth:
-    #             for el in to_check:
-    #                 if nx.has_path(self, node, el):
-    #                     removed_nodes.append(el)
-
-    #     retained_nodes = list(set(nodes) - set(removed_nodes))
-
-    #     print('Descendant nodes: ', removed_nodes)
-    #     print('Retained nodes:   ', retained_nodes)
-    #     return retained_nodes
-
-
-
-    # Generate set of parts contained by node(s); node list optional argument
-    def set_parts_in(self, _nodes = None):
-
-        # If no nodes passed, default to all nodes in assembly
+        ''' If no nodes passed, default to all nodes in assembly '''
         if not _nodes:
             _nodes = self.nodes
 
-        # Convert to list if only one item
+        ''' Convert to list if only one item '''
         if type(_nodes) == int:
             _nodes = [_nodes]
 
+        ''' Get all leaves in specified nodes by set intersection '''
+        leaves = set(_nodes) & self.leaves
+        subassemblies = set(_nodes) - leaves
+
+        leaves_in = {}
+
+        for leaf in leaves:
+            leaves_in[leaf] = {leaf}
+
+        for sub in subassemblies:
+            leaves_in[sub] = nx.descendants(self, sub) - subassemblies
+
+        return leaves_in
+
+
+
+    def get_positions(self, _nodes = None):
+
+        ''' If no nodes passed, default to all nodes in assembly '''
+        if not _nodes:
+            _nodes = self.nodes
+
+        ''' Convert to list if only one item '''
+        if type(_nodes) == int:
+            _nodes = [_nodes]
+
+        ''' Get parts in each node '''
+        parts_in = self.get_leaves_in(_nodes)
+
+        self.pos = {}
+
+        ''' Get all levels, i.e. number of parts by inclusion '''
+        levels = set([len(parts) for node,parts in parts_in.items()])
+
+        ''' Get number of possible combinations for each level... '''
         leaves = self.leaves
-        non_leaves = self.nodes - leaves
+        n = len(leaves)
+        ''' ...but only needed for specified nodes '''
+        self.S_p = {level:binom(n,level) for level in levels}
+        print('\nS_p:')
+        print(self.S_p)
 
-        # Get all levels, i.e. number of parts (n_p) and assemblies (n_a)...
-        # ...contained in each node
+        ''' Create map of leaves to combinatorial numbering starting at 1... '''
+        leaves_list = list(leaves)
+        leaf_map = {}
+        ''' ...but only need to map specified nodes; do by index in list of all nodes '''
+        for leaf in leaves:
+            leaf_map[leaf] = leaves_list.index(leaf) + 1
+
+        print('leaf_map: ', leaf_map)
+
+        self.levels_map = {}
         for node in _nodes:
-            des_all   = nx.descendants(self, node)
-            des_parts = des_all - non_leaves
-            n_a = len(des_all) + 1
-            n_p = len(des_parts)
-            # If 0, change to level of individual part
-            if n_p == 0:
-                n_p = self.part_level
-            self.nodes[node]['n_a'] = n_a
-            self.nodes[node]['n_p'] = n_p
-            if node in leaves:
-                self.nodes[node]['parts'] = {node}
-                self.nodes[node]['all']   = {node}
+            parts = parts_in[node]
+            num_parts = len(parts)
+            comb_parts = [leaf_map[part] for part in parts]
+            rank = self.rank(comb_parts)
+            S = self.S_p[num_parts]
+            if num_parts in self.levels_map:
+                self.levels_map[num_parts].append(node)
             else:
-                self.nodes[node]['parts'] = des_parts
-                self.nodes[node]['all']   = des_all
+                self.levels_map[num_parts] = [node]
+            if S <= 1:
+                x = 0
+            else:
+                x = ((rank/(S-1))-0.5)*np.log(S-1)
+            self.pos[node] = (x, num_parts)
 
+        return self.pos
 
-
-    def set_node_positions(self):
-
-        # Populate set of parts contained by each node
-        self.set_parts_in()
-
-        # Generate list of all part levels in nodes
-        self.levels_a = set([self.nodes[el]['n_a'] for el in self.nodes])
-        self.levels_a.remove(self.part_level)
-        self.levels_p = set([self.nodes[el]['n_p'] for el in self.nodes])
-        # self.levels_p.remove(self.part_level)
-
-        self.levels_p_sorted = sorted(list(self.levels_p))
-        self.levels_a_sorted = sorted(list(self.levels_a))
-
-        self.levels_dict = {}
-        for level in self.levels_p:
-            self.levels_dict[level] = []
-
-        nodes = self.nodes
-        for node in nodes:
-            level = nodes[node]['n_p']
-            self.levels_dict[level].append(node)
-
-        # Get total number of combinations, S, for each part level
-        _len = len(self.leaves)
-        self.S_p = {el:comb(_len, el) for el in range(int(_len+1))}
-
-        # Map leaves to combinatorial numbering starting at 1
-        self.leaf_dict = {}
-        self.leaf_dict_inv = {}
-        leaves = list(self.leaves)
-        for i in range(_len):
-            leaf = leaves[i]
-            self.leaf_dict[leaf] = i+1
-            self.leaf_dict_inv[i+1] = leaf
-
-        for k,v in self.levels_dict.items():
-            S = self.S_p[k]
-            for node in v:
-                parts = [self.leaf_dict[el] for el in self.nodes[node]['parts']]
-                rank = self.rank(parts)
-                # print('Node, rank = ', node, rank)
-                if S <= 1:
-                    self.nodes[node]['x'] = 0
-                else:
-                    self.nodes[node]['x'] = ((rank/(S-1))-0.5)*np.log(S-1)
-
-        print('Finished setting node positions')
-
-
-
-    def get_positions(self):
-
-        # Get dict of positions for "pos" in nx.draw
-        x = nx.get_node_attributes(self, 'x')
-        y = nx.get_node_attributes(self, 'n_p')
-        # pos_nodes = {k:(x[k], y[k]) for k in self.nodes}
-
-        pos_nodes = {}
-        for k in self.nodes:
-            try:
-                pos_nodes[k] = (x[k], y[k])
-            except:
-                print('Position not found for node: ', k)
-                print('Node data: ', self.nodes[k])
-
-        pos_edges = {}
-        for u,v in self.edges:
-            _u = self.nodes[u]
-            _v = self.nodes[v]
-            pos_edges[(u,v)] = [(_u['x'], _u['n_p']), (_v['x'], _v['n_p'])]
-
-        # pos = [(self.nodes[el]['x'], self.nodes[el]['n_p']) for el in self.nodes]
-        return (pos_nodes, pos_edges)
+    ''' ----------
+    '''
 
 
 
 
-
-    ## HR 12/05/20
-    ## -----------
-    ## All combinatorial ranking/unranking methods here
-    ## -----------
-    ''' And all class methods'''
+    '''
+    HR 12/05/20
+    -----------
+    All combinatorial ranking/unranking methods here
+    And all class methods '''
 
 
 
@@ -1370,21 +1497,22 @@ class StepParse(nx.DiGraph):
         _rank = 0
         items.sort()
         for i, item in enumerate(items):
-            _comb = comb(item-1, i+1)
+            _comb = binom(item-1, i+1)
             _rank += _comb
 
         return _rank
 
 
 
-    # UNRANKING OF COMBINATORIAL INDEX
-    # --
-    # Find combination of nCk items at position "rank" in ordered list of all combinations
-    # Ordering is zero-based
-    # --
+    '''
+    UNRANKING OF COMBINATORIAL INDEX
+    --
+    Find combination of nCk items at position "rank" in ordered list of all combinations
+    Ordering is zero-based
+    '''
     def unrank(self, n, k, rank):
 
-        # Check all arguments (except "self") are integers
+        ''' Check all arguments (except "self") are integers '''
         args_ = {k:v for k,v in locals().items() if k != 'self'}
         # print(['{} = {}'.format(k,v) for k,v in locals().items() if k != 'self'])
         print(['{} = {}'.format(k,v) for k,v in args_.items()])
@@ -1398,15 +1526,15 @@ class StepParse(nx.DiGraph):
             print('Rank must be b/t 0 and (nCk-1); returning None')
             return None
 
-        # Increase by one to satisfy zero-based indexing; check/resolve in future
+        ''' Increase by one to satisfy zero-based indexing; check/resolve in future '''
         rank += 1
 
-        # Check whether "rank" within nCk
+        ''' Check whether "rank" within nCk '''
         max_ln = self.comb_ln(n, k)
 
-        # Check whether rank is massive; if so, calculate log(x) = log(x/a) + log(a)
-        # where x = rank and a = chop
-        # as np.log can't handle large numbers (actually x > 1e308 or so)
+        ''' Check whether rank is massive; if so, calculate log(x) = log(x/a) + log(a)
+            where x = rank and a = chop
+            as np.log can't handle large numbers (actually x > 1e308 or so) '''
         chop = 1
         if rank > 1e100:
             print('Chopping rank for log')
@@ -1419,33 +1547,34 @@ class StepParse(nx.DiGraph):
             print('Rank outside nCk bounds: returning None')
             return None
 
-        # Convert to float to allow large n values
+        ''' Convert to float to allow large n values '''
         rank = float(rank)
 
 
 
-        # Optimisation as (n+1 k) = (n k)*(n+1)/(n+1-m)
+        ''' Optimisation as (n+1 k) = (n k)*(n+1)/(n+1-m) '''
         def next_comb(n_, k_, _comb):
-            _next = _comb*(n_+1)/(n_+1-k_)
+            _next = (_comb*(n_+1))/(n_+1-k_)
             return _next
 
-        # Using scipy comb; can optimise in future, e.g. with Stirling approx.
+        ''' Using scipy comb; can optimise in future, e.g. with Stirling approx. '''
         def comb_(n_, k_):
-            _result = comb(n_, k_)
+            _result = binom(n_, k_)
             return _result
 
 
 
-        # MAIN ALGORITHM
-        # ---
+        '''
+        MAIN ALGORITHM
+        '''
         _items = []
         remainder = rank
 
         # print('Starting, k = {}'.format(k))
-        # Find each of k items
+        ''' Find each of k items '''
         for i in range(k, 0, -1):
 
-            # Initialise at 1 as kCk = 1 for all k
+            ''' Initialise at 1 as kCk = 1 for all k '''
             c_i = 1
             count = i
 
@@ -1463,6 +1592,44 @@ class StepParse(nx.DiGraph):
             remainder -= last_comb
 
         return _items
+
+
+
+        ''' Alternative algorithm for unranking '''
+        # '''
+        # Algorithm 515 (Buckles_77, DOI: https://doi.org/10.1145/355732.355739)
+        # For indexing combinations -> lexicographic ordering for ranking/unranking
+        # Taken from Github repo of sleeepyjack here:
+        # https://github.com/sleeepyjack/alg515/blob/master/python/alg515.py
+        # '''
+        
+        # from scipy.special import binom
+        
+        # def comb(N, P, L):
+        #     C = [0] * P
+        #     X = 1
+        #     R = int(binom(N-X, P-1))
+        #     K = R
+        
+        #     while (K <= L):
+        #         X += 1
+        #         R  = int(binom(N-X, P-1))
+        #         K += R
+        #     K -= R
+        #     C[0] = X-1
+        
+        #     for I in range(2, P):
+        #         X += 1
+        #         R  = int(binom(N-X, P-I))
+        #         K += R
+        #         while (K <= L):
+        #             X += 1
+        #             R  = int(binom(N-X, P-I))
+        #             K += R
+        #         K -= R
+        #         C[I-1] = X-1
+        #     C[P-1] = X + L - K
+        #     return C
 
 
 
@@ -1622,12 +1789,12 @@ class StepParse(nx.DiGraph):
             _n1 = [_el for _el in a1.nodes if a1.nodes[_el][_field] == el]
             _n2 = [_el for _el in a2.nodes if a2.nodes[_el][_field] == el]
             if _n1 and _n2:
-                # If single-value mapping, then map...
                 if len(_n1) == 1 and len(_n2) == 1:
+                    ''' If single-value mapping, then map... '''
                     if _n1[0] not in _map:
                         _map[_n1[0]] = _n2[0]
-                # ...else create dupe dict entry
                 else:
+                    ''' ...else create dupe dict entry '''
                     _field_dict[tuple(_n1)] = tuple(_n2)
 
         return _field_dict, _map
@@ -1670,14 +1837,14 @@ class StepParse(nx.DiGraph):
     @classmethod
     def remap_entries(self, k, v, _dupe, _sim):
 
-        # Start building new dupe map elements...
+        ''' Start building new dupe map elements... '''
         _toremove1 = [el for el in _dupe]
         _toremove2 = [el for el in _dupe.values()]
 
         _n1 = tuple([el for el in k if el not in _toremove1])
         _n2 = tuple([el for el in v if el not in _toremove2])
 
-        # ...and new total sim dict entry
+        ''' ...and new total sim dict entry '''
         _newv = {_k:_v for _k,_v in _sim.items() if _k in _n1}
         _klist = list(_newv)
         for el in _klist:
@@ -1687,9 +1854,9 @@ class StepParse(nx.DiGraph):
 
         _dupenew = {}
         _simnew = {}
-        # Check that n1 and n2 both have items in, otherwise would be redundant...
+        ''' Check that n1 and n2 both have items in, otherwise would be redundant... '''
         if (len(_n1) > 0) and (len(_n2) > 0):
-            # ...then actually create entries...
+            ''' ...then actually create entries... '''
             _dupenew[_n1] = _n2
             _simnew[_n1] = _newv
 
@@ -1729,7 +1896,7 @@ class StepParse(nx.DiGraph):
             _n1 = [nodes1[i] for i in _i]
             _n2 = [nodes2[i] for i in _i]
 
-            # Reform grouping; no need to rebuild totals dict as not used after this
+            ''' Reform grouping; no need to rebuild totals dict as not used after this '''
             _newentries[tuple(_n1)] = tuple(_n2)
 
         return _newentries
@@ -1758,8 +1925,8 @@ class StepParse(nx.DiGraph):
             _klist.remove(el)
             _vlist.remove(el)
 
-        ''' ...then match the remainder in numerical order '''
-        # N.B. "zip" truncates to length of smaller list
+        ''' ...then match the remainder in numerical order
+            N.B. "zip" truncates to length of smaller list '''
         if _klist and _vlist:
             _remainder = dict(zip(_klist, _vlist))
             for _k,_v in _remainder.items():
@@ -1816,23 +1983,23 @@ class StepParse(nx.DiGraph):
             ''' Get singular mappings and update global map '''
             _newlymapped = self.get_by_max(_totals[k])
 
-            # Remove old/create new dict items if any mappings made above
+            ''' Remove old/create new dict items if any mappings made above '''
             if _newlymapped:
 
-                # Add new entries to master map
+                ''' Add new entries to master map '''
                 _mapped.update(_newlymapped)
 
-                # Get new entries with already-mapped items removed...
+                ''' Get new entries with already-mapped items removed... '''
                 _newdupe, _newtotals = self.remap_entries(k, v, _newlymapped, _totalscopy[k])
 
-                # ...then update dicts with new entries
+                ''' ...then update dicts with new entries '''
                 if _newdupe:
                     _dupemap.update(_newdupe)
                 if _newtotals:
                     _totals.update(_newtotals)
 
-                # Remove old entries with "pop";
-                # 'None' default in "pop" avoids exception if item not found
+                ''' Remove old entries with "pop";
+                    'None' default in "pop" avoids exception if item not found '''
                 _dupemap.pop(k, None)
                 _totals.pop(k, None)
 
@@ -1907,24 +2074,26 @@ class StepParse(nx.DiGraph):
 
 
 
-    ## ------------------------------------------------------------------------
-    ## TREE RECONCILIATION
-    ## HR 3/6/20
-    ## Based on Networkx "optimal_edit_paths" method
+    ''' ---------------
+    TREE RECONCILIATION
+    HR 3/6/20
+    Based on Networkx "optimal_edit_paths" method
 
-    # a1 and a2 are assemblies 1 and 2
-    # Call as "paths, cost = StepParse.Reconcile(a1, a2)"
+    a1 and a2 are assemblies 1 and 2
+    Call as "paths, cost = StepParse.Reconcile(a1, a2)"
+    ----------------'''
 
     @classmethod
     def Reconcile(self, a1, a2, lev_tol = 0.1):
 
-        # ---------------------------------------------------------------------
-        # STAGE 1: MAP NODES/EDGES B/T THE TWO ASSEMBLIES
+        ''' -------------------------------------------
+        STAGE 1: MAP NODES/EDGES B/T THE TWO ASSEMBLIES
 
-        # Currently done simply via tags
-        # More sophisticated metrics to be implemented in future
+        Currently done simply via tags
+        More sophisticated metrics to be implemented in future
 
-        # Method of assembly class (StepParse) to set item tags to their IDs
+        Method of assembly class (StepParse) to set item tags to their IDs
+        --------------------------------------------'''
         a1.set_all_tags()
         a2.set_all_tags()
 
@@ -1939,20 +2108,18 @@ class StepParse(nx.DiGraph):
 
 
 
-        def remove_special_chars(_str):
+        # def remove_special_chars(_str):
 
-            # Strip out special characters
-            _str = re.sub('[!@#$_]', '', _str)
+        #     # Strip out special characters
+        #     _str = re.sub('[!@#$_]', '', _str)
 
-            return _str
+        #     return _str
 
 
 
-        # Comparing nodes directly gives equality simply if both are NX nodes...
-        # ...i.e. same object type...
-        # ---
-        # ..so equality in this context defined as having same tags...
-        # ...as cannot compare node IDs directly with Networkx
+        ''' Comparing nodes directly gives equality simply if both are NX nodes...
+            ...i.e. same object type, but this isn't good enough...'
+            ...so equality in this context defined as having same tags '''
         def return_eq(item1, item2):
 
             _eq = False
@@ -1960,19 +2127,20 @@ class StepParse(nx.DiGraph):
             tag1 = item1['tag']
             tag2 = item2['tag']
 
-            # 1. Simple equality test based on tags (which are just IDs copied to "tag" field)...
+            ''' 1. Simple equality test based on tags
+                (which are just IDs copied to "tag" field)... '''
             _eq = tag1 == tag2
             if _eq:
                 print('Mapped ', tag1, 'to ', tag2)
 
-            # # 2. ...then do test based on parts contained by nodes...
+            # ''' 2. ...then do test based on parts contained by nodes... '''
             # if tag1 and tag2 in (a1.nodes or a2.nodes) and not _eq:
             #     try:
             #         _eq = item1['parts'] == item2['parts']
             #     except:
             #         pass
 
-            # # 3. ...then do test based on Levenshtein distance b/t items, if leaves
+            # ''' 3. ...then do test based on Levenshtein distance b/t items, if leaves '''
             # if not _eq and (tag1 and tag2 in (a1.leaves or a2.leaves)):
 
             #     tag1_ = remove_special_chars(tag1)
@@ -2010,7 +2178,7 @@ class StepParse(nx.DiGraph):
             edge_deletions = []
             edge_additions = []
 
-            # Find additions and deletions by set difference (relative complement)
+            ''' Find additions and deletions by set difference (relative complement) '''
             #
             for _node in n1 - n2:
                 node_deletions.append((_node, None))
@@ -2037,8 +2205,9 @@ class StepParse(nx.DiGraph):
             return paths, cost
 
 
-        # ---------------------------------------------------------------------
-        # STAGE 2: FIND EDIT PATHS VIA NETWORKX AND GENERATE REPORT
+        ''' -----------------------------------------------------
+        STAGE 2: FIND EDIT PATHS VIA NETWORKX AND GENERATE REPORT
+        ------------------------------------------------------'''
 
         # paths, cost_nx = nx.optimal_edit_paths(a1, a2, node_match = return_eq, edge_match = return_eq)
         # paths = paths[0]
@@ -2054,5 +2223,3 @@ class StepParse(nx.DiGraph):
 
         return paths, cost, cost_from_edits, node_edits, edge_edits
 
-
-    ## ------------------------------------------------------------------------
