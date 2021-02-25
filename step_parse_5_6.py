@@ -55,6 +55,9 @@ import matplotlib as mpl
 #TH: useful for working with files
 import os
 
+# ''' XLSX for export '''
+# import xlsxwriter
+
 # HR 10/7/20 All python-occ imports for 3D viewer
 # from OCC.Core.TopoDS import TopoDS_Shape
 from OCC.Core.TopoDS import TopoDS_Solid, TopoDS_Compound
@@ -835,6 +838,8 @@ class AssemblyManager():
 
 
 
+
+
 class StepParse(nx.DiGraph):
 
     def __init__(self, assembly_id = None, *args, **kwargs):
@@ -874,8 +879,8 @@ class StepParse(nx.DiGraph):
                         self.nodes[node][kwd] = self.remove_suffixes(value)
                     except:
                         pass
-            # else:
-            #     self.nodes[node][kwd] = self.default_label_part
+            else:
+                self.nodes[node][kwd] = self.default_label_part
 
 
 
@@ -1078,19 +1083,19 @@ class StepParse(nx.DiGraph):
         """
 
         # Copyright 2018 Thomas Paviot (tpaviot@gmail.com)
-        
+
         # This file is part of pythonOCC.
-        
+
         # pythonOCC is free software: you can redistribute it and/or modify
         # it under the terms of the GNU Lesser General Public License as published by
         # the Free Software Foundation, either version 3 of the License, or
         # (at your option) any later version.
-        
+
         # pythonOCC is distributed in the hope that it will be useful,
         # but WITHOUT ANY WARRANTY; without even the implied warranty of
         # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
         # GNU Lesser General Public License for more details.
-        
+
         # You should have received a copy of the GNU Lesser General Public License
         # along with pythonOCC.  If not, see <http://www.gnu.org/licenses/>.
 
@@ -1401,8 +1406,6 @@ class StepParse(nx.DiGraph):
         n = len(leaves)
         ''' ...but only needed for specified nodes '''
         self.S_p = {level:binom(n,level) for level in levels}
-        print('\nS_p:')
-        print(self.S_p)
 
         ''' Create map of leaves to combinatorial numbering starting at 1... '''
         leaves_list = list(leaves)
@@ -1410,8 +1413,6 @@ class StepParse(nx.DiGraph):
         ''' ...but only need to map specified nodes; do by index in list of all nodes '''
         for leaf in leaves:
             leaf_map[leaf] = leaves_list.index(leaf) + 1
-
-        print('leaf_map: ', leaf_map)
 
         self.levels_map = {}
         for node in _nodes:
@@ -1602,22 +1603,22 @@ class StepParse(nx.DiGraph):
         # Taken from Github repo of sleeepyjack here:
         # https://github.com/sleeepyjack/alg515/blob/master/python/alg515.py
         # '''
-        
+
         # from scipy.special import binom
-        
+
         # def comb(N, P, L):
         #     C = [0] * P
         #     X = 1
         #     R = int(binom(N-X, P-1))
         #     K = R
-        
+
         #     while (K <= L):
         #         X += 1
         #         R  = int(binom(N-X, P-1))
         #         K += R
         #     K -= R
         #     C[0] = X-1
-        
+
         #     for I in range(2, P):
         #         X += 1
         #         R  = int(binom(N-X, P-I))

@@ -101,6 +101,9 @@ from OCC.Display import OCCViewer
 from OCC.Core.Quantity import (Quantity_Color, Quantity_NOC_WHITE, Quantity_TOC_RGB)
 from OCC.Core.AIS import AIS_Shaded, AIS_WireFrame
 
+''' XLSX for export '''
+import xlsxwriter
+
 
 
 
@@ -915,6 +918,89 @@ class MainWindow(wx.Frame):
 
 
 
+    ''' HR 25/02/21
+        Basic XLSX output for whole lattice (i.e. all assemblies) '''
+    def xlsx_write(self, _ids = None):
+
+        def get_header(_id, page):
+            mgr = self._assembly_manager._mgr
+            header = []
+            header.append(mgr[_id].assembly_id)
+            header.append(page.name)
+            header.append(page.filename_fullpath)
+            return header
+
+        def get_output_data(_id, node):
+            ass = self._assembly_manager._mgr[_id]
+            data = []
+            data.append(node)
+            try:
+                data.append(ass.nodes[node]['label'])
+            except:
+                data.append('')
+            try:
+                data.append(ass.nodes[node]['text'])
+            except:
+                data.append('')
+            try:
+                data.append(ass.get_parent(node))
+            except:
+                data.append('None (root)')
+            return data
+
+        header_fields = ['Assembly ID', 'Assembly name', 'STP/STEP file']
+        y_offset = len(header_fields) + 2
+
+        fields = ['Node ID', 'Label', 'Text', 'Parent ID', ]
+
+        save_file = 'torch_project.xlsx'
+
+        excel_file = os.getcwd() + '\\' + save_file
+        workbook = xlsxwriter.Workbook(excel_file)
+
+        '''Export all assemblies if none specified '''
+        if not _ids:
+            _ids = [el for el in self._assembly_manager._mgr]
+
+        ''' Create worksheet for each assembly to be exported '''
+        sheet_dict = {}
+        for _id in _ids:
+            sheet_dict[_id] = workbook.add_worksheet()
+            page = [k for k,v in self._notebook_manager.items() if v == _id][0]
+
+            ''' Write main header... '''
+            header_data = get_header(_id, page)
+            for i,el in enumerate(header_fields):
+                sheet_dict[_id].write(i, 0, el)
+                sheet_dict[_id].write(i, 1, header_data[i])
+
+            ''' ...and node fields header '''
+            for i,el in enumerate(fields):
+                sheet_dict[_id].write(y_offset-1,i,el)
+
+            ''' Get all nodes still present in CTC '''
+            nodes = list(page.ctc_dict)
+
+            counter = 0
+            for node in nodes:
+                data = get_output_data(_id, node)
+                for i,el in enumerate(data):
+                    x = i
+                    y = counter + y_offset
+                    sheet_dict[_id].write(y, x, data[i])
+                counter += 1
+
+        workbook.close()
+
+
+
+    ''' HR 25/02/21
+        Basic XLSX reader for files saved using "xlsx_write" '''
+    def xlsx_read(self, full_path):
+        pass
+
+
+
     def get_selected_assemblies(self):
 
         self.AddText('Trying to get selected assemblies...')
@@ -964,7 +1050,7 @@ class MainWindow(wx.Frame):
         # print('Mapped nodes: ', _mapped)
         # print('Unmapped nodes: ', _unmapped)
 
-        pass
+        self.xlsx_write()
 
 
 
@@ -1204,6 +1290,8 @@ class MainWindow(wx.Frame):
         _page = self._notebook.GetPage(self._notebook.GetSelection())
         _id = self._notebook_manager[_page]
 
+        _page.filename_fullpath = open_filename
+
         ''' Wipe existing assembly if one already loaded; replace with empty one '''
         if self._page.file_open:
             ''' Remove old assembly from manager '''
@@ -1288,26 +1376,22 @@ class MainWindow(wx.Frame):
 
                 if depth == i:
                     parent_id = [el for el in self.assembly.predecessors(node)][-1]
-                    # print('Parent ID:', parent_id)
                     ctc_parent = self._page.ctc_dict[parent_id]
 
                     ''' Text and label will differ if changed previously by user in parts view '''
                     try:
                         label = self.assembly.nodes[node]['label']
                     except:
-                        label = 'New item'
+                        label = self.assembly.default_label_part
                     try:
                         text = self.assembly.nodes[node]['text']
                     except:
-                        text = 'New item'
+                        text = self.assembly.default_label_part
 
-                    # print('Node: ', node)
                     ctc_item = self._page.partTree_ctc.AppendItem(ctc_parent, text = text, ct_type = 1, data = {'id_': node, 'sort_id': node, 'label': label})
 
                     self._page.ctc_dict[node]         = ctc_item
                     self._page.ctc_dict_inv[ctc_item] = node
-
-
 
         self._page.partTree_ctc.ExpandAll()
 
