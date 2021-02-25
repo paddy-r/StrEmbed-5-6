@@ -1382,6 +1382,16 @@ class StepParse(nx.DiGraph):
         return leaves_in
 
 
+    ''' Memoise combinations '''
+    def get_comb(self, n, k):
+        if not hasattr(self, 'nCk'):
+            print('Creating nCk dict for memoisation...')
+            self.nCk = {}
+        if (n,k) not in self.nCk:
+            self.nCk[(n,k)] = binom(n,k)
+        return self.nCk[(n,k)]
+
+
 
     def get_positions(self, _nodes = None):
 
@@ -1405,7 +1415,7 @@ class StepParse(nx.DiGraph):
         leaves = self.leaves
         n = len(leaves)
         ''' ...but only needed for specified nodes '''
-        self.S_p = {level:binom(n,level) for level in levels}
+        self.S_p = {level:self.get_comb(n,level) for level in levels}
 
         ''' Create map of leaves to combinatorial numbering starting at 1... '''
         leaves_list = list(leaves)
@@ -1498,7 +1508,7 @@ class StepParse(nx.DiGraph):
         _rank = 0
         items.sort()
         for i, item in enumerate(items):
-            _comb = binom(item-1, i+1)
+            _comb = self.get_comb(item-1, i+1)
             _rank += _comb
 
         return _rank
@@ -1560,7 +1570,7 @@ class StepParse(nx.DiGraph):
 
         ''' Using scipy comb; can optimise in future, e.g. with Stirling approx. '''
         def comb_(n_, k_):
-            _result = binom(n_, k_)
+            _result = self.get_comb(n_, k_)
             return _result
 
 
