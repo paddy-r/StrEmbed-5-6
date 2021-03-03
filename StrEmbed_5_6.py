@@ -86,7 +86,7 @@ except:
     pass
 
 # For STEP import
-from step_parse_5_6 import StepParse, AssemblyManager
+from step_parse_5_6 import StepParse, AssemblyManager, ShapeRenderer
 
 # import matplotlib.pyplot as plt
 import numpy as np
@@ -210,51 +210,6 @@ class MyTree(ctc.CustomTreeCtrl):
             count = self.GetChildrenCount(node, recursively = False)
             if count > 1:
                 self.SortChildren(node)
-
-
-
-
-
-"""
-HR 26/08/2020
-ShapeRenderer, wxBaseViewer and wxViewer3D both adapted from pythonocc script "wxDisplay"
-https://github.com/tpaviot/pythonocc-core
-Copyright info below
-"""
-
-##Copyright 2008-2017 Thomas Paviot (tpaviot@gmail.com)
-##
-##This file is part of pythonOCC.
-##
-##pythonOCC is free software: you can redistribute it and/or modify
-##it under the terms of the GNU Lesser General Public License as published by
-##the Free Software Foundation, either version 3 of the License, or
-##(at your option) any later version.
-##
-##pythonOCC is distributed in the hope that it will be useful,
-##but WITHOUT ANY WARRANTY; without even the implied warranty of
-##MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-##GNU Lesser General Public License for more details.
-##
-##You should have received a copy of the GNU Lesser General Public License
-##along with pythonOCC.  If not, see <http://www.gnu.org/licenses/>.
-
-class ShapeRenderer(OCCViewer.Viewer3d):
-    '''
-    HR 17/7/20
-    Adapted/simplified from OffScreenRenderer in OCCViewer <- OCC.Display
-    Dumps render of shape to jpeg file
-    '''
-    def __init__(self, screen_size = (1000,1000)):
-        super().__init__()
-        self.Create()
-        self.View.SetBackgroundColor(Quantity_Color(Quantity_NOC_WHITE))
-        self.SetSize(screen_size[0], screen_size[1])
-        # self.DisableAntiAliasing()
-        self.SetModeShaded()
-        # self.display_triedron()
-
-        self._rendered = False
 
 
 

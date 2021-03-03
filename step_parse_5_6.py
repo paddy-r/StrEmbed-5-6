@@ -55,8 +55,8 @@ import matplotlib as mpl
 #TH: useful for working with files
 import os
 
-# ''' XLSX for export '''
-# import xlsxwriter
+''' XLSX for export '''
+import xlsxwriter
 
 # HR 10/7/20 All python-occ imports for 3D viewer
 # from OCC.Core.TopoDS import TopoDS_Shape
@@ -84,6 +84,61 @@ from OCC.Core.BRepBuilderAPI import BRepBuilderAPI_Transform
 
 # from OCC.Extend.TopologyUtils import (discretize_edge, get_sorted_hlr_edges,
                                       # list_of_shapes_to_compound)
+
+from OCC.Display import OCCViewer
+from OCC.Core.Quantity import (Quantity_Color, Quantity_NOC_WHITE, Quantity_TOC_RGB)
+from OCC.Extend import DataExchange
+
+from OCC.Core.Bnd import Bnd_Box
+from OCC.Core.BRepBndLib import brepbndlib_Add
+# from OCC.Core.BRepPrimAPI import BRepPrimAPI_MakeBox, BRepPrimAPI_MakeCylinder
+from OCC.Core.BRepMesh import BRepMesh_IncrementalMesh
+
+
+
+
+"""
+HR 26/08/2020
+ShapeRenderer, wxBaseViewer and wxViewer3D both adapted from pythonocc script "wxDisplay"
+https://github.com/tpaviot/pythonocc-core
+Copyright info below
+"""
+
+##Copyright 2008-2017 Thomas Paviot (tpaviot@gmail.com)
+##
+##This file is part of pythonOCC.
+##
+##pythonOCC is free software: you can redistribute it and/or modify
+##it under the terms of the GNU Lesser General Public License as published by
+##the Free Software Foundation, either version 3 of the License, or
+##(at your option) any later version.
+##
+##pythonOCC is distributed in the hope that it will be useful,
+##but WITHOUT ANY WARRANTY; without even the implied warranty of
+##MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+##GNU Lesser General Public License for more details.
+##
+##You should have received a copy of the GNU Lesser General Public License
+##along with pythonOCC.  If not, see <http://www.gnu.org/licenses/>.
+
+class ShapeRenderer(OCCViewer.Viewer3d):
+    '''
+    HR 17/7/20
+    Adapted/simplified from OffScreenRenderer in OCCViewer <- OCC.Display
+    Dumps render of shape to jpeg file
+    '''
+    def __init__(self, screen_size = (1000,1000)):
+        super().__init__()
+        self.Create()
+        self.View.SetBackgroundColor(Quantity_Color(Quantity_NOC_WHITE))
+        self.SetSize(screen_size[0], screen_size[1])
+        # self.DisableAntiAliasing()
+        self.SetModeShaded()
+        # self.display_triedron()
+
+        self._rendered = False
+
+
 
 
 
@@ -855,6 +910,9 @@ class StepParse(nx.DiGraph):
 
            self.enforce_unary = True
 
+           self.renderer = ShapeRenderer()
+
+
 
     @property
     def new_node_id(self):
@@ -913,7 +971,7 @@ class StepParse(nx.DiGraph):
         self.prod_lines          = []
         self.filename = os.path.splitext(step_filename)[0]
 
-
+        self.step_filename = step_filename
 
         line_hold = ''
         line_type = ''
@@ -1135,7 +1193,7 @@ class StepParse(nx.DiGraph):
             #print("Nb components  :", l_comps.Length())
             #print()
             name = lab.GetLabelName()
-            print("Name :", name)
+            # print("Name :", name)
 
             if shape_tool.IsAssembly(lab):
                 l_c = TDF_LabelSequence()
@@ -1168,7 +1226,7 @@ class StepParse(nx.DiGraph):
                     color_tool.SetInstanceColor(shape, 2, c)
                     colorSet = True
                     n = c.Name(c.Red(), c.Green(), c.Blue())
-                    print('    Instance color Name & RGB: ', c, n, c.Red(), c.Green(), c.Blue())
+                    # print('    Instance color Name & RGB: ', c, n, c.Red(), c.Green(), c.Blue())
 
                 if not colorSet:
                     if (color_tool.GetColor(lab, 0, c) or
@@ -1179,7 +1237,7 @@ class StepParse(nx.DiGraph):
                         color_tool.SetInstanceColor(shape, 2, c)
 
                         n = c.Name(c.Red(), c.Green(), c.Blue())
-                        print('    Shape color Name & RGB: ', c, n, c.Red(), c.Green(), c.Blue())
+                        # print('    Shape color Name & RGB: ', c, n, c.Red(), c.Green(), c.Blue())
 
                 shape_disp = BRepBuilderAPI_Transform(shape, loc.Transformation()).Shape()
                 if not shape_disp in output_shapes:
@@ -1199,7 +1257,7 @@ class StepParse(nx.DiGraph):
                         color_tool.SetInstanceColor(shape_sub, 2, c)
                         colorSet = True
                         n = c.Name(c.Red(), c.Green(), c.Blue())
-                        print('    Instance color Name & RGB: ', c, n, c.Red(), c.Green(), c.Blue())
+                        # print('    Instance color Name & RGB: ', c, n, c.Red(), c.Green(), c.Blue())
 
                     if not colorSet:
                         if (color_tool.GetColor(lab_subs, 0, c) or
@@ -1210,7 +1268,7 @@ class StepParse(nx.DiGraph):
                             color_tool.SetInstanceColor(shape, 2, c)
 
                             n = c.Name(c.Red(), c.Green(), c.Blue())
-                            print('    Shape color Name & RGB: ', c, n, c.Red(), c.Green(), c.Blue())
+                            # print('    Shape color Name & RGB: ', c, n, c.Red(), c.Green(), c.Blue())
                     shape_to_disp = BRepBuilderAPI_Transform(shape_sub, loc.Transformation()).Shape()
 
                     # position the subshape to display
@@ -1251,6 +1309,189 @@ class StepParse(nx.DiGraph):
 
         ''' Map master IDs to OCC objects '''
         self.OCC_dict.update(dict(zip(tree_list, OCC_list)))
+
+
+
+    ''' Calculate bounding box of shape
+        ---
+        From PythonOCC here:
+        https://github.com/tpaviot/pythonocc-demos/blob/master/examples/core_geometry_bounding_box.py
+        Copyright information below
+        --- '''
+    #Copyright 2017 Thomas Paviot (tpaviot@gmail.com)
+    ##
+    ##This file is part of pythonOCC.
+    ##
+    ##pythonOCC is free software: you can redistribute it and/or modify
+    ##it under the terms of the GNU Lesser General Public License as published by
+    ##the Free Software Foundation, either version 3 of the License, or
+    ##(at your option) any later version.
+    ##
+    ##pythonOCC is distributed in the hope that it will be useful,
+    ##but WITHOUT ANY WARRANTY; without even the implied warranty of
+    ##MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    ##GNU Lesser General Public License for more details.
+    ##
+    ##You should have received a copy of the GNU Lesser General Public License
+    ##along with pythonOCC.  If not, see <http://www.gnu.org/licenses/>.
+    def get_boundingbox(self, shape, tol = 1e-6, use_mesh = True):
+        """ return the bounding box of the TopoDS_Shape `shape`
+        Parameters
+        ----------
+        shape : TopoDS_Shape or a subclass such as TopoDS_Face
+            the shape to compute the bounding box from
+        tol: float
+            tolerance of the computed boundingbox
+        use_mesh : bool
+            a flag that tells whether or not the shape has first to be meshed before the bbox
+            computation. This produces more accurate results
+        """
+        bbox = Bnd_Box()
+        bbox.SetGap(tol)
+        if use_mesh:
+            mesh = BRepMesh_IncrementalMesh()
+            mesh.SetParallelDefault(True)
+            mesh.SetShape(shape)
+            mesh.Perform()
+            if not mesh.IsDone():
+                raise AssertionError("Mesh not done.")
+        brepbndlib_Add(shape, bbox, use_mesh)
+
+        xmin, ymin, zmin, xmax, ymax, zmax = bbox.Get()
+        return xmin, ymin, zmin, xmax, ymax, zmax, xmax-xmin, ymax-ymin, zmax-zmin
+
+
+
+    ''' Image renderer (copied from StrEmbed) '''
+    def save_image(self, node, img_name = None):
+
+        ''' Default image name: unambiguous combination of:
+            cwd + STEP file name + node label/STEP line ref '''
+        if not img_name:
+            cwd = os.getcwd()
+            step_filename = self.remove_suffixes(self.step_filename)
+            node_label = self.nodes[node]['label']
+            # step_ref = [k for k,v in self.part_dict.items() if node_label in v][0]
+            # img_name = os.path.join(cwd, step_filename, step_ref) + '.jpg'
+            img_name = os.path.join(cwd, step_filename, node_label) + '.jpg'
+            # print('Image filename: ', img_name)
+
+        image_saved_ok = False
+        self.renderer.EraseAll()
+
+        ''' Get all parts contained by node, including node itself...
+            in case node is a part '''
+        children = nx.descendants(self, node)
+        children.add(node)
+        if not children:
+            print('No items to render')
+            return None
+
+        print('Children = ', children)
+
+        ''' Render each item, if OCC data exists for it in OCC_dict '''
+        for child in children:
+            if child in self.OCC_dict:
+                shape = self.OCC_dict[child]
+                label, c = self.shapes[shape]
+                print('Rendering shape for item', child)
+                self.renderer.DisplayShape(shape, color = Quantity_Color(c.Red(),
+                                                                         c.Green(),
+                                                                         c.Blue(),
+                                                                         Quantity_TOC_RGB))
+            else:
+                print('Cannot render item ', child, ' as not present as CAD model')
+
+        try:
+            print('Fitting and dumping image ', img_name)
+            ''' Create directory if it doesn't already exist '''
+            img_path = os.path.split(img_name)[0]
+            if not os.path.isdir(img_path):
+                os.mkdir(img_path)
+
+            self.renderer.View.FitAll()
+            self.renderer.View.ZFitAll()
+            self.renderer.View.Dump(img_name)
+            ''' Check if rendered and dumped, i.e. if image file exists '''
+            if os.path.exists(img_name):
+                image_saved_ok = True
+
+        except Exception as e:
+            print('Could not dump image to file; exception follows')
+            print(e)
+
+        return image_saved_ok
+
+
+
+    ''' Save all constituent parts in STEP file to individual STEP files '''
+    def dump(self, path = None):
+
+        if not path:
+            path = os.getcwd()
+
+        ''' This is the off-screen renderer for generating images of each shape '''
+        renderer = ShapeRenderer()
+
+        ''' Create folder for everything if not already present '''
+        path = os.path.join(path, self.remove_suffixes(self.step_filename))
+        print('Path: ', path)
+        if not os.path.exists(path):
+            print('Creating folder...')
+            os.makedirs(path)
+        else:
+            print('Folder already exists...')
+
+
+
+        ''' Initialise Excel file for dumping boundary box data '''
+        if not hasattr(self, 'bb_data'):
+            self.bb_data = {}
+
+        fields = ['STEP line ref', 'Label', 'xmin', 'ymin', 'zmin', 'xmax', 'ymax', 'zmax', 'xmax-xmin', 'ymax-ymin', 'zmax-zmin']
+        bb_file = os.path.join(path, 'BB_data.xlsx')
+        print('Full BB file path: ', bb_file)
+        workbook = xlsxwriter.Workbook(bb_file)
+        sheet = workbook.add_worksheet()
+        for i,el in enumerate(fields):
+            sheet.write(0, i, el)
+
+
+
+        y = 0
+        for k,v in self.OCC_dict.items():
+            # filename = self.part_dict[self.step_dict[k]]
+            filename = self.remove_suffixes(self.part_dict[self.step_dict[k]])
+
+            ''' Create STEP file for each part/shape in input file '''
+            fullpath = os.path.join(path, filename) + '.STEP'
+            print('Full STEP path: ', fullpath)
+            if os.path.isfile(fullpath):
+                print('File already exists; not saving STEP file for part ID ', k)
+            else:
+                print('Saving STEP file for part ID ', k)
+                DataExchange.write_step_file(v, fullpath)
+
+            ''' Dump image to file '''
+            img_name = os.path.join(path, filename) + '.jpg'
+            print('Full img path: ', img_name)
+            self.save_image(k, img_name)
+
+            ''' Save all bounding box data to Excel file '''
+            label = self.nodes[k]['label']
+            step_ref = [_k for _k,_v in self.part_dict.items() if label in _v][0]
+
+            self.bb_data[k] = [step_ref, label]
+            self.bb_data[k].extend(self.get_boundingbox(v))
+            print('Saving BB data to Excel file for ', label)
+
+            for i,el in enumerate(self.bb_data[k]):
+                sheet.write(y+1, i, el)
+            y += 1
+
+        workbook.close()
+
+
 
 
 
