@@ -13,3 +13,4 @@ g = StepParse()
 g.load_step(input_file)
 g.OCC_read_file(input_file)
 
+g.dump()
