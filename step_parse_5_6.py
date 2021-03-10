@@ -255,6 +255,7 @@ class AssemblyManager():
         - Copy existing methods from GUI and check they're working
         - Goal is to remove any reference to individual assemblies in GUI,
             all interactions in GUI should be with assembly manager here
+        - COMPLETE FEB 2021! I am a neat guy!
     '''
 
 
@@ -1376,11 +1377,10 @@ class StepParse(nx.DiGraph):
             img_name = os.path.join(cwd, step_filename, node_label) + '.jpg'
             # print('Image filename: ', img_name)
 
-        image_saved_ok = False
         self.renderer.EraseAll()
 
-        ''' Get all parts contained by node, including node itself...
-            in case node is a part '''
+        ''' Get all parts contained by node, in case node is sub-assembly...
+            and also node itself, in case node is an individual part '''
         children = nx.descendants(self, node)
         children.add(node)
         if not children:
@@ -1400,7 +1400,7 @@ class StepParse(nx.DiGraph):
                                                                          c.Blue(),
                                                                          Quantity_TOC_RGB))
             else:
-                print('Cannot render item ', child, ' as not present as CAD model')
+                print('Cannot render item ', child, ' as not present as shape model')
 
         try:
             print('Fitting and dumping image ', img_name)
@@ -1414,84 +1414,234 @@ class StepParse(nx.DiGraph):
             self.renderer.View.Dump(img_name)
             ''' Check if rendered and dumped, i.e. if image file exists '''
             if os.path.exists(img_name):
+                print('Image saved to ', img_name)
                 image_saved_ok = True
+            else:
+                print('Could not save image')
+                image_saved_ok = False
 
         except Exception as e:
             print('Could not dump image to file; exception follows')
             print(e)
+            image_saved_ok = False
+
 
         return image_saved_ok
 
 
 
-    ''' Save all constituent parts in STEP file to individual STEP files '''
-    def dump(self, path = None):
+    ''' Save all constituent parts in STEP file to individual STEP files
+        "path" is for saving everything
+        "model_folder" is path to STEP models for similarity scores '''
+    def dump(self, partfind_folder, path = None, model_folder = None):
+
+        ''' -------------------------------------------------------------- '''
+        ''' Import all partfind stuff from TH
+            For now, just sets/resets cwd and grabs code from scripts '''
+        cwd_old = os.getcwd()
+        os.chdir(partfind_folder)
+
+        from partfind_search_gui_hr import networkx_to_dgl
+        from step_to_graph import StepToGraph
+        from partgnn import PartGNN
+        from main import parameter_parser
+        import dgl
+
+        args = parameter_parser()
+        model = PartGNN(args)
+        model.load_model()
+
+        ''' Restore previous cwd '''
+        ''' -------------------------------------------------------------- '''
+        os.chdir(cwd_old)
+
+
+
+        ''' Adapted from TH's "partfind_search_gui_hr" and "step_to_graph"
+            Minimal code to get graphs of parts '''
+        def load_from_step(step_file):
+            # print("Loading STEP file for sim calc: ", step_file)
+            s_load = StepToGraph(step_file)
+            g_load = networkx_to_dgl(s_load.H)
+            face_g = g_load.node_type_subgraph(['face'])
+            g_out = dgl.to_homogeneous(face_g)
+            return g_out
+
+
 
         if not path:
             path = os.getcwd()
 
-        ''' This is the off-screen renderer for generating images of each shape '''
-        renderer = ShapeRenderer()
-
         ''' Create folder for everything if not already present '''
-        path = os.path.join(path, self.remove_suffixes(self.step_filename))
-        print('Path: ', path)
-        if not os.path.exists(path):
+        folder = os.path.join(path, self.remove_suffixes(self.step_filename))
+        # path = os.path.join(path, self.step_filename)
+        print('Folder to save to: ', folder)
+        if not os.path.exists(folder):
             print('Creating folder...')
-            os.makedirs(path)
+            os.makedirs(folder)
         else:
             print('Folder already exists...')
 
+        if not model_folder:
+            model_folder = folder
 
 
-        ''' Initialise Excel file for dumping boundary box data '''
-        if not hasattr(self, 'bb_data'):
-            self.bb_data = {}
 
-        fields = ['STEP line ref', 'Label', 'xmin', 'ymin', 'zmin', 'xmax', 'ymax', 'zmax', 'xmax-xmin', 'ymax-ymin', 'zmax-zmin']
-        bb_file = os.path.join(path, 'BB_data.xlsx')
-        print('Full BB file path: ', bb_file)
-        workbook = xlsxwriter.Workbook(bb_file)
-        sheet = workbook.add_worksheet()
-        for i,el in enumerate(fields):
-            sheet.write(0, i, el)
+        ''' Get all unique parts by node ID to avoid duplication '''
+        leaves = self.leaves
+        uniques = {v:k for k,v in self.step_dict.items() if k in leaves}
+        uniques_sorted = sorted(uniques)
+        # uniques = [v for k,v in uniques.items()]
+        print('Got list of unique/distinct parts')
+        print('Number: ', len(uniques))
+
+
+
+        ''' Initialise Excel file for dumping data '''
+        # if not hasattr(self, 'bb_data'):
+        #     self.bb_data = {}
+        self.bb_data = {}
+
+        # if not hasattr(self, 'ss_data'):
+        #     self.ss_data = {}
+        self.ss_data= {}
+
+        data_file = os.path.join(folder, 'data.xlsx')
+        print('Full data file path: ', data_file)
+        workbook = xlsxwriter.Workbook(data_file)
+
+
+
+        ''' Header sheet '''
+        header_sheet = workbook.add_worksheet('Information')
+        header_fields = ['STEP line ref', 'Part name/label']
+        for i,el in enumerate(header_fields):
+            header_sheet.write(0, i, el)
+        for i,el in enumerate(uniques_sorted):
+            name = self.part_dict[el]
+            header_sheet.write(i+1, 0, el)
+            header_sheet.write(i+1, 1, name)
+
+
+        ''' Bounding box (bb) sheet '''
+        bb_fields = ['STEP line ref', 'xmin', 'ymin', 'zmin', 'xmax', 'ymax', 'zmax', 'xmax-xmin', 'ymax-ymin', 'zmax-zmin']
+        bb_sheet = workbook.add_worksheet('BB data')
+        for i,el in enumerate(bb_fields):
+            bb_sheet.write(0, i, el)
+
+        ''' Similarity scores (ss) sheet '''
+        ss_fields = uniques_sorted
+        ss_sheet = workbook.add_worksheet('Sim score data')
+        for i,el in enumerate(ss_fields):
+            ss_sheet.write(0, i+1, el)
+            ss_sheet.write(i+1, 0, el)
 
 
 
         y = 0
-        for k,v in self.OCC_dict.items():
-            # filename = self.part_dict[self.step_dict[k]]
-            filename = self.remove_suffixes(self.part_dict[self.step_dict[k]])
+        # for prod_ref, node in uniques.items():
+        for prod_ref in uniques_sorted:
 
-            ''' Create STEP file for each part/shape in input file '''
-            fullpath = os.path.join(path, filename) + '.STEP'
-            print('Full STEP path: ', fullpath)
-            if os.path.isfile(fullpath):
-                print('File already exists; not saving STEP file for part ID ', k)
+            name = self.part_dict[prod_ref]
+            node = uniques[prod_ref]
+
+            '''
+            Save STEP file for part
+            '''
+            step_path = os.path.join(folder, name + '.STEP')
+
+            ''' Skip if STEP file already exists'''
+            if os.path.isfile(step_path):
+                print('Part model already exists; not saving')
             else:
-                print('Saving STEP file for part ID ', k)
-                DataExchange.write_step_file(v, fullpath)
+                print('Saving STEP file for part: ', name)
+                print(step_path)
+                shape = self.OCC_dict[node]
+                DataExchange.write_step_file(shape, step_path)
 
-            ''' Dump image to file '''
-            img_name = os.path.join(path, filename) + '.jpg'
-            print('Full img path: ', img_name)
-            self.save_image(k, img_name)
+            '''
+            Save rendered image of part
+            '''
+            img_path = os.path.join(folder, name + '.jpg')
 
-            ''' Save all bounding box data to Excel file '''
-            label = self.nodes[k]['label']
-            step_ref = [_k for _k,_v in self.part_dict.items() if label in _v][0]
+            ''' Skip if image file already exists '''
+            if os.path.isfile(img_path):
+                print('Part image file already exists; not saving')
+            else:
+                print('Saving image for part: ', name)
+                print(img_path)
+                self.save_image(node, img_path)
 
-            self.bb_data[k] = [step_ref, label]
-            self.bb_data[k].extend(self.get_boundingbox(v))
-            print('Saving BB data to Excel file for ', label)
+            '''
+            Calculate and save bounding box data
+            '''
+            shape = self.OCC_dict[node]
+            self.bb_data[prod_ref] = self.get_boundingbox(shape)
+            print('Saving bounding box data for ', prod_ref)
 
-            for i,el in enumerate(self.bb_data[k]):
-                sheet.write(y+1, i, el)
+            bb_sheet.write(y+1, 0, prod_ref)
+            for i,el in enumerate(self.bb_data[prod_ref]):
+                bb_sheet.write(y+1, i+1, el)
+
             y += 1
 
+
+
+        ''' Re-run for ML similarity calculations
+            as must cycle through all STEP files for each part
+            so all must already be present '''
+        y = 0
+        _done = []
+        for prod_ref in uniques_sorted:
+
+
+            name = self.part_dict[prod_ref]
+            node = uniques[prod_ref]
+
+            # print('Prod ref: ', prod_ref)
+            step_path = os.path.join(folder, name + '.STEP')
+
+            '''
+            Calculate and save similarity score data
+            '''
+
+            g1 = load_from_step(step_path)
+            self.ss_data[prod_ref] = []
+
+            for prod_ref2 in uniques_sorted:
+
+                ''' 1/2 Skip if pair already calculated... '''
+                if prod_ref2 in _done:
+                    print('Skipping: already done')
+                    continue
+
+                name2 = self.part_dict[prod_ref2]
+
+                # print('Prod ref: ', prod_ref2)
+                step_path2 = os.path.join(folder, name2 + '.STEP')
+
+                g2 = load_from_step(step_path2)
+                score = model.test_pair(g1,g2)
+                print('Comparing ', prod_ref, 'and ', prod_ref2)
+                print(step_path, step_path2)
+                print('Similarity: ', score)
+
+                self.ss_data[prod_ref].append(score)
+
+            ''' 2/2 ...then offset by number of skipped entries
+                to give triangular matrix '''
+            for i,el in enumerate(self.ss_data[prod_ref]):
+                ss_sheet.write(y+1, i+y+1, el)
+
+            _done.append(prod_ref)
+            print(_done)
+
+            y += 1
+
+
+
+        ''' Must close workbook! '''
         workbook.close()
-
-
 
 
 

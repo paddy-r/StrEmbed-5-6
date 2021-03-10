@@ -1464,7 +1464,7 @@ class MainWindow(wx.Frame):
             h_new = w_new*h/w
 
         ''' Rescale '''
-        img = img.Scale(w_new, h_new, wx.IMAGE_QUALITY_HIGH)
+        img = img.Scale(int(w_new), int(h_new), wx.IMAGE_QUALITY_HIGH)
 
         return img
 
@@ -1627,51 +1627,10 @@ class MainWindow(wx.Frame):
 
 
     def render_by_id(self, node):
-
-        image_saved_ok = False
-        self.renderer.EraseAll()
-
-        ''' Get all parts in assembly, including assembly '''
-        children = nx.descendants(self.assembly, node)
-        children.add(node)
-        if not children:
-            print('No items to render')
-            return None
-
-        print('Children = ', children)
-
-        ''' Render each item, if OCC data exists for it in OCC_dict '''
-        for child in children:
-            if child in self.assembly.OCC_dict:
-                shape = self.assembly.OCC_dict[child]
-                label, c = self.assembly.shapes[shape]
-                print('Rendering shape for item', child)
-                self.renderer.DisplayShape(shape, color = Quantity_Color(c.Red(),
-                                                                         c.Green(),
-                                                                         c.Blue(),
-                                                                         Quantity_TOC_RGB))
-            else:
-                print('Cannot render item ', child, ' as not present as CAD model')
-
-        try:
-            img_name = self.get_image_name(node)
-            print('Fitting and dumping image ', img_name)
-            ''' Create directory if it doesn't already exist '''
-            img_path = os.path.split(img_name)[0]
-            if not os.path.isdir(img_path):
-                os.mkdir(img_path)
-
-            self.renderer.View.FitAll()
-            self.renderer.View.ZFitAll()
-            self.renderer.View.Dump(img_name)
-            ''' Check if rendered and dumped, i.e. if image file exists '''
-            if os.path.exists(img_name):
-                image_saved_ok = True
-
-        except Exception as e:
-            print('Could not dump image to file; exception follows')
-            print(e)
-
+        ''' MUST grab/specify image name here, as default naming in
+            "save_image" is not suitable '''
+        img_name = self.get_image_name(node)
+        image_saved_ok = self.assembly.save_image(node, img_name)
         return image_saved_ok
 
 
