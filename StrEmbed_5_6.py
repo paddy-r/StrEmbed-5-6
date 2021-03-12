@@ -125,7 +125,7 @@ def CreateBitmap(imgName, mask = wx.WHITE, size = None):
 
     # ...ah masked iroff
     if mask:
-        _mask = wx.Mask(_bmp, wx.WHITE)
+        _mask = wx.Mask(_bmp, mask)
         _bmp.SetMask(_mask)
 
     return _bmp
@@ -608,7 +608,9 @@ class MainWindow(wx.Frame):
 
         ''' All other app-wide initialisation '''
         self.SetBackgroundColour('white')
-        self.SetIcon(wx.Icon(wx.ArtProvider.GetBitmap(wx.ART_PLUS)))
+        # self.SetIcon(wx.Icon(wx.ArtProvider.GetBitmap(wx.ART_PLUS)))
+        # self.SetIcon(wx.Icon(images.sb_icon3_bmp.GetBitmap()))
+        self.SetIcon(wx.Icon(CreateBitmap("sb_icon3_grey_bmp", size = (20,20), mask = 'white')))
 
         self.no_image_ass  = images.no_image_ass_png.GetBitmap()
         self.no_image_part = images.no_image_part_png.GetBitmap()
@@ -1038,7 +1040,12 @@ class MainWindow(wx.Frame):
 
         # return _map
 
-        pass
+        print('Dumping data...')
+        try:
+            self.assembly.dump()
+            print('Done!')
+        except:
+            print("Just couldn't do it, boss!")
 
 
 

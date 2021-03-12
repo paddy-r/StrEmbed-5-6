@@ -37,6 +37,7 @@ import nltk
 import numpy as np
 from scipy.special import comb, binom
 # from math import log
+import pandas as pd
 
 # # For powerset construction
 # from itertools import chain, combinations
@@ -912,6 +913,7 @@ class StepParse(nx.DiGraph):
            self.enforce_unary = True
 
            self.renderer = ShapeRenderer()
+           self.PARTFIND_FOLDER_DEFAULT = "C:\_Work\_DCS project\__ALL CODE\_Repos\partfind\partfind for git"
 
 
 
@@ -1433,7 +1435,10 @@ class StepParse(nx.DiGraph):
     ''' Save all constituent parts in STEP file to individual STEP files
         "path" is for saving everything
         "model_folder" is path to STEP models for similarity scores '''
-    def dump(self, partfind_folder, path = None, model_folder = None):
+    def dump(self, partfind_folder = None, path = None, model_folder = None):
+
+        if not partfind_folder:
+            partfind_folder = self.PARTFIND_FOLDER_DEFAULT
 
         ''' -------------------------------------------------------------- '''
         ''' Import all partfind stuff from TH
@@ -1594,7 +1599,7 @@ class StepParse(nx.DiGraph):
         _done = []
         for prod_ref in uniques_sorted:
 
-
+            _okay = True
             name = self.part_dict[prod_ref]
             node = uniques[prod_ref]
 
@@ -1604,29 +1609,37 @@ class StepParse(nx.DiGraph):
             '''
             Calculate and save similarity score data
             '''
-
-            g1 = load_from_step(step_path)
             self.ss_data[prod_ref] = []
+            try:
+                g1 = load_from_step(step_path)
+            except:
+                print('Exception/error occurred; defaulting similarity to zero')
+                _okay = False
 
-            for prod_ref2 in uniques_sorted:
+            if _okay:
+                for prod_ref2 in uniques_sorted:
 
-                ''' 1/2 Skip if pair already calculated... '''
-                if prod_ref2 in _done:
-                    print('Skipping: already done')
-                    continue
+                    ''' 1/2 Skip if pair already calculated... '''
+                    if prod_ref2 in _done:
+                        print('Skipping: already done')
+                        continue
 
-                name2 = self.part_dict[prod_ref2]
+                    name2 = self.part_dict[prod_ref2]
 
-                # print('Prod ref: ', prod_ref2)
-                step_path2 = os.path.join(folder, name2 + '.STEP')
+                    # print('Prod ref: ', prod_ref2)
+                    step_path2 = os.path.join(folder, name2 + '.STEP')
 
-                g2 = load_from_step(step_path2)
-                score = model.test_pair(g1,g2)
-                print('Comparing ', prod_ref, 'and ', prod_ref2)
-                print(step_path, step_path2)
-                print('Similarity: ', score)
+                    try:
+                        g2 = load_from_step(step_path2)
+                        score = model.test_pair(g1,g2)
+                    except:
+                        print('Exception/error occurred; defaulting similarity to zero')
+                        score = ''
+                    print('Comparing ', prod_ref, 'and ', prod_ref2)
+                    print(step_path, step_path2)
+                    print('Similarity: ', score)
 
-                self.ss_data[prod_ref].append(score)
+                    self.ss_data[prod_ref].append(score)
 
             ''' 2/2 ...then offset by number of skipped entries
                 to give triangular matrix '''
@@ -1642,6 +1655,51 @@ class StepParse(nx.DiGraph):
 
         ''' Must close workbook! '''
         workbook.close()
+
+
+
+    ''' Get bounding box and similarity score data from Excel file
+        that has been saved via "dump"
+        ---
+        Loaded data exactly matches format of saved data '''
+    def load_bb_ss_data(self, file = None, overwrite_data = False):
+
+        if not file:
+            path = os.getcwd()
+            if not hasattr(self, 'step_filename'):
+                print('No STEP file present in assembly and none specified')
+                return None
+            folder = os.path.join(path, self.remove_suffixes(self.step_filename))
+            file = os.path.join(folder, 'data.xlsx')
+            print('Excel file path to read from: ', file)
+
+        if not os.path.isfile(file):
+            print('File not found')
+            return False
+
+        step_refs = []
+
+        bb_dict = {}
+        bb_raw = pd.read_excel(file, sheet_name = 'BB data')
+        bb_raw = bb_raw.to_numpy()
+        for el in bb_raw:
+            ref = el[0]
+            step_refs.append(ref)
+            bb_dict[ref] = el[1:].tolist()
+
+        ss_dict = {}
+        ss_raw = pd.read_excel(file, sheet_name = 'Sim score data')
+        ss_raw = ss_raw.to_numpy()
+        refs = [el for el in step_refs]
+        for i,el in enumerate(ss_raw):
+            ref = el[0]
+            # ss_dict[ref] = {}
+            # for _i,_el in enumerate(el[i+1:]):
+            #     ss_dict[ref][refs[_i]] = _el
+            ss_dict[ref] = el[i+1:].tolist()
+            refs.remove(ref)
+
+        return bb_dict, ss_dict
 
 
 
