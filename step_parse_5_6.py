@@ -56,8 +56,9 @@ import matplotlib as mpl
 #TH: useful for working with files
 import os
 
-''' XLSX for export '''
+''' For data exchange export '''
 import xlsxwriter
+import score_saver
 
 # HR 10/7/20 All python-occ imports for 3D viewer
 # from OCC.Core.TopoDS import TopoDS_Shape
@@ -1306,12 +1307,12 @@ class StepParse(nx.DiGraph):
         self.shapes = output_shapes
         # return self.output_shapes
         ''' Get all TopoDS_Solid objects in OCC dict '''
-        OCC_list  = [k for k in self.shapes if type(k) in self.topo_types]
+        self.OCC_list  = [k for k in self.shapes if type(k) in self.topo_types]
         '''' Get all leaves in step_dict (could also just get list from leaves method) '''
         tree_list = [k for k in self.step_dict if k in self.leaves]
 
         ''' Map master IDs to OCC objects '''
-        self.OCC_dict.update(dict(zip(tree_list, OCC_list)))
+        self.OCC_dict.update(dict(zip(tree_list, self.OCC_list)))
 
 
 
@@ -1509,7 +1510,7 @@ class StepParse(nx.DiGraph):
 
         # if not hasattr(self, 'ss_data'):
         #     self.ss_data = {}
-        self.ss_data= {}
+        self.ss_data = {}
 
         data_file = os.path.join(folder, 'data.xlsx')
         print('Full data file path: ', data_file)
