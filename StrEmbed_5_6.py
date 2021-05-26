@@ -96,8 +96,7 @@ import images
 
 # For 3D CAD viewer based on python-occ
 from OCC.Display import OCCViewer
-# import wxDisplay
-# from OCC.Display import wxDisplay
+from OCC.Display import wxDisplay
 from OCC.Core.Quantity import (Quantity_Color, Quantity_NOC_WHITE, Quantity_TOC_RGB)
 from OCC.Core.AIS import AIS_Shaded, AIS_WireFrame
 
@@ -211,10 +210,17 @@ class MyTree(ctc.CustomTreeCtrl):
 
 
 
-
-class wxBaseViewer(wx.Panel):
+''' HR 26/05/21
+    New class with overridden constructor to reduce code here
+    Only differences are:
+        (1) Don't bind EVT_LEFT_UP as that is bound later, and
+        (2) Apply style to panel 
+    Some code duplication from Pythonocc here:
+    https://github.com/tpaviot/pythonocc-core '''
+class MyBaseViewer(wxDisplay.wxBaseViewer):
     def __init__(self, parent = None):
-        super().__init__(parent, style = wx.BORDER_SIMPLE)
+        wx.Panel.__init__(self, parent, style = wx.BORDER_SIMPLE)
+
         self.Bind(wx.EVT_SIZE, self.OnSize)
         self.Bind(wx.EVT_IDLE, self.OnIdle)
         self.Bind(wx.EVT_MOVE, self.OnMove)
@@ -222,11 +228,11 @@ class wxBaseViewer(wx.Panel):
         self.Bind(wx.EVT_KILL_FOCUS, self.OnLostFocus)
         self.Bind(wx.EVT_MAXIMIZE, self.OnMaximize)
         self.Bind(wx.EVT_LEFT_DOWN, self.OnLeftDown)
-        # self.Bind(wx.EVT_LEFT_UP, self.OnLeftUp)
-        self.Bind(wx.EVT_MIDDLE_UP, self.OnMiddleUp)
-        self.Bind(wx.EVT_MIDDLE_DOWN, self.OnMiddleDown)
         self.Bind(wx.EVT_RIGHT_DOWN, self.OnRightDown)
+        self.Bind(wx.EVT_MIDDLE_DOWN, self.OnMiddleDown)
+        # self.Bind(wx.EVT_LEFT_UP, self.OnLeftUp)
         self.Bind(wx.EVT_RIGHT_UP, self.OnRightUp)
+        self.Bind(wx.EVT_MIDDLE_UP, self.OnMiddleUp)
         self.Bind(wx.EVT_MOTION, self.OnMotion)
         self.Bind(wx.EVT_KEY_DOWN, self.OnKeyDown)
         self.Bind(wx.EVT_MOUSEWHEEL, self.OnWheelScroll)
@@ -234,85 +240,15 @@ class wxBaseViewer(wx.Panel):
         self._display = None
         self._inited = False
 
-    def GetWinId(self):
-        """ Returns the windows Id as an integer.
-        issue with GetHandle on Linux for wx versions
-        >3 or 4. Window must be displayed before GetHandle is
-        called. For that, just wait for a few milliseconds/seconds
-        before calling InitDriver
-        a solution is given here
-        see https://github.com/cztomczak/cefpython/issues/349
-        but raises an issue with wxPython 4.x
-        finally, it seems that the sleep function does the job
-        reported as a pythonocc issue
-        https://github.com/tpaviot/pythonocc-core/476
-        """
-        timeout = 10  # 10 seconds
-        win_id = self.GetHandle()
-        init_time = time.time()
-        delta_t = 0.  # elapsed time, initialized to 0 before the while loop
-        # if ever win_id is 0, enter the loop untill it gets a value
-        while win_id == 0 and delta_t < timeout:
-            time.sleep(0.1)
-            wx.SafeYield()
-            win_id = self.GetHandle()
-            delta_t = time.time() - init_time
-        # check that win_id is different from 0
-        if win_id == 0:
-            raise AssertionError("Can't get win Id")
-        # otherwise returns the window Id
-        return win_id
-
-    def OnSize(self, event):
-        if self._inited:
-            self._display.OnResize()
-
-    def OnIdle(self, event):
-        pass
-
-    def OnMove(self, event):
-        pass
-
-    def OnFocus(self, event):
-        pass
-
-    def OnLostFocus(self, event):
-        pass
-
-    def OnMaximize(self, event):
-        pass
-
-    def OnLeftDown(self, event):
-        pass
-
-    def OnRightDown(self, event):
-        pass
-
-    def OnMiddleDown(self, event):
-        pass
-
-    def OnLeftUp(self, event):
-        pass
-
-    def OnRightUp(self, event):
-        pass
-
-    def OnMiddleUp(self, event):
-        pass
-
-    def OnMotion(self, event):
-        pass
-
-    def OnKeyDown(self, event):
-        pass
 
 
-
-
-
-class wxViewer3d(wxBaseViewer):
+''' HR 26/05/21
+    New class with overridden constructor etc. to reduce code here
+    Some code duplication from Pythonocc here:
+    https://github.com/tpaviot/pythonocc-core '''
+class MyViewer3d(wxDisplay.wxViewer3d):
     def __init__(self, *kargs):
-        super().__init__(*kargs)
+        MyBaseViewer.__init__(self, *kargs)
 
         self._drawbox = False
         self._zoom_area = False
@@ -362,136 +298,6 @@ class wxViewer3d(wxBaseViewer):
             # print('Unrecognized key pressed %i' % code)
             pass
 
-    def OnMaximize(self, event):
-        if self._inited:
-            self._display.Repaint()
-
-    def OnMove(self, event):
-        if self._inited:
-            self._display.Repaint()
-
-    def OnIdle(self, event):
-        if self._drawbox:
-            pass
-        elif self._inited:
-            self._display.Repaint()
-
-    def Test(self):
-        if self._inited:
-            self._display.Test()
-
-    def OnFocus(self, event):
-        if self._inited:
-            self._display.Repaint()
-
-    def OnLostFocus(self, event):
-        if self._inited:
-            self._display.Repaint()
-
-    def OnPaint(self, event):
-        if self._inited:
-            self._display.Repaint()
-
-    def ZoomAll(self, evt):
-        self._display.FitAll()
-
-    def Repaint(self, evt):
-        if self._inited:
-            self._display.Repaint()
-
-    def OnLeftDown(self, evt):
-        self.SetFocus()
-        self.dragStartPos = evt.GetPosition()
-        self._display.StartRotation(self.dragStartPos.x, self.dragStartPos.y)
-
-    def OnLeftUp(self, evt):
-        pt = evt.GetPosition()
-        if self._select_area:
-            [Xmin, Ymin, dx, dy] = self._drawbox
-            self._display.SelectArea(Xmin, Ymin, Xmin+dx, Ymin+dy)
-            self._select_area = False
-        else:
-            self._display.Select(pt.x, pt.y)
-
-    def OnMiddleDown(self, evt):
-        self.dragStartPos = evt.GetPosition()
-        self._display.StartRotation(self.dragStartPos.x, self.dragStartPos.y)
-
-    def OnMiddleUp(self, evt):
-        pass
-
-    def OnRightDown(self, evt):
-        self.dragStartPos = evt.GetPosition()
-        self._display.StartRotation(self.dragStartPos.x, self.dragStartPos.y)
-
-    def OnRightUp(self, evt):
-        if self._zoom_area:
-            [Xmin, Ymin, dx, dy] = self._drawbox
-            self._display.ZoomArea(Xmin, Ymin, Xmin+dx, Ymin+dy)
-            self._zoom_area = False
-
-    def OnWheelScroll(self, evt):
-        # Zooming by wheel
-        if evt.GetWheelRotation() > 0:
-            zoom_factor = 2.
-        else:
-            zoom_factor = 0.5
-        self._display.Repaint()
-        self._display.ZoomFactor(zoom_factor)
-
-    def DrawBox(self, event):
-        tolerance = 2
-        pt = event.GetPosition()
-        dx = pt.x - self.dragStartPos.x
-        dy = pt.y - self.dragStartPos.y
-        if abs(dx) <= tolerance and abs(dy) <= tolerance:
-            return
-        dc = wx.ClientDC(self)
-        dc.SetPen(wx.Pen(wx.WHITE, 1, wx.DOT))
-        dc.SetBrush(wx.TRANSPARENT_BRUSH)
-        dc.SetLogicalFunction(wx.XOR)
-        if self._drawbox:
-            r = wx.Rect(*self._drawbox)
-            dc.DrawRectangle(r)
-        r = wx.Rect(self.dragStartPos.x, self.dragStartPos.y, dx, dy)
-        dc.DrawRectangle(r)
-        self._drawbox = [self.dragStartPos.x, self.dragStartPos.y, dx, dy]
-
-    def OnMotion(self, evt):
-        pt = evt.GetPosition()
-
-        # ROTATE
-        if evt.LeftIsDown() and not evt.ShiftDown():
-            self._display.Rotation(pt.x, pt.y)
-            self._drawbox = False
-        # DYNAMIC ZOOM
-        elif evt.RightIsDown() and not evt.ShiftDown():
-            self._display.Repaint()
-            self._display.DynamicZoom(abs(self.dragStartPos.x), abs(self.dragStartPos.y), abs(pt.x), abs(pt.y))
-            self.dragStartPos.x = pt.x
-            self.dragStartPos.y = pt.y
-            self._drawbox = False
-        # PAN
-        elif evt.MiddleIsDown():
-            dx = pt.x - self.dragStartPos.x
-            dy = pt.y - self.dragStartPos.y
-            self.dragStartPos.x = pt.x
-            self.dragStartPos.y = pt.y
-            self._display.Pan(dx, -dy)
-            self._drawbox = False
-        # DRAW BOX
-        elif evt.RightIsDown() and evt.ShiftDown():  # ZOOM WINDOW
-            self._zoom_area = True
-            self.DrawBox(evt)
-        elif evt.LeftIsDown() and evt.ShiftDown():  # SELECT AREA
-            self._select_area = True
-            self.DrawBox(evt)
-        else:
-            self._drawbox = False
-            self._display.MoveTo(pt.x, pt.y)
-
-
-
 
 
 ''' Class to veto unsplit when sash is double-clicked '''
@@ -503,8 +309,6 @@ class MySplitter(wx.SplitterWindow):
 
     def OnSashDoubleClick(self, event):
         event.Veto()
-
-
 
 
 
@@ -553,7 +357,8 @@ class NotebookPanel(wx.Panel):
 
 
         ''' GEOMETRY VIEWS SETUP '''
-        self.occ_panel = wxViewer3d(self._view_splitter)
+        # self.occ_panel = wxViewer3d(self._view_splitter)
+        self.occ_panel = MyViewer3d(self._view_splitter)
         self.occ_panel.InitDriver()
         self.occ_panel._display.View.SetBackgroundColor(Quantity_Color(Quantity_NOC_WHITE))
 

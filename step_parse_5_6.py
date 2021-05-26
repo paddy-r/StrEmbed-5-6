@@ -103,7 +103,7 @@ import fileutils
 
 """
 HR 26/08/2020
-Shapere, wxBaseViewer and wxViewer3D both adapted from pythonocc script "wxDisplay"
+ShapeRenderer adapted from pythonocc script "wxDisplay"
 https://github.com/tpaviot/pythonocc-core
 Copyright info below
 """
