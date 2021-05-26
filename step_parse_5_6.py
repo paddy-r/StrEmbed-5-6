@@ -58,11 +58,10 @@ import os
 
 ''' For data exchange export '''
 import xlsxwriter
-import score_saver
 
 # HR 10/7/20 All python-occ imports for 3D viewer
 # from OCC.Core.TopoDS import TopoDS_Shape
-from OCC.Core.TopoDS import TopoDS_Solid, TopoDS_Compound
+from OCC.Core.TopoDS import TopoDS_Shape, TopoDS_Solid, TopoDS_Compound, TopoDS_Shell, TopoDS_Face, TopoDS_Vertex, TopoDS_Edge, TopoDS_Wire, TopoDS_CompSolid
 # from OCC.Core.BRepMesh import BRepMesh_IncrementalMesh
 # from OCC.Core.StlAPI import stlapi_Read, StlAPI_Writer
 # from OCC.Core.BRep import BRep_Builder
@@ -90,18 +89,21 @@ from OCC.Core.BRepBuilderAPI import BRepBuilderAPI_Transform
 from OCC.Display import OCCViewer
 from OCC.Core.Quantity import (Quantity_Color, Quantity_NOC_WHITE, Quantity_TOC_RGB)
 from OCC.Extend import DataExchange
+from OCC.Core.Graphic3d import Graphic3d_BufferType
 
 from OCC.Core.Bnd import Bnd_Box
 from OCC.Core.BRepBndLib import brepbndlib_Add
 # from OCC.Core.BRepPrimAPI import BRepPrimAPI_MakeBox, BRepPrimAPI_MakeCylinder
 from OCC.Core.BRepMesh import BRepMesh_IncrementalMesh
 
+''' PartGNN interaction '''
+import fileutils
 
 
 
 """
 HR 26/08/2020
-ShapeRenderer, wxBaseViewer and wxViewer3D both adapted from pythonocc script "wxDisplay"
+Shapere, wxBaseViewer and wxViewer3D both adapted from pythonocc script "wxDisplay"
 https://github.com/tpaviot/pythonocc-core
 Copyright info below
 """
@@ -137,7 +139,7 @@ class ShapeRenderer(OCCViewer.Viewer3d):
         # self.DisableAntiAliasing()
         self.SetModeShaded()
         # self.display_triedron()
-
+        self.SetRaytracingMode(depth = 5)
         self._rendered = False
 
 
@@ -902,27 +904,39 @@ class StepParse(nx.DiGraph):
 
     def __init__(self, assembly_id = None, *args, **kwargs):
 
-           super().__init__(*args, **kwargs)
-           self.part_level = 1
-           self.topo_types = (TopoDS_Solid, TopoDS_Compound)
-           self.assembly_id = assembly_id
-           self.OCC_dict = {}
+        super().__init__(*args, **kwargs)
+        self.part_level = 1
 
-           self.default_label_part = 'Unnamed item'
-           self.default_label_ass = 'Unnamed item'
+        ''' Below is full range of shape types, according to Open Cascade documentation here:
+            https://dev.opencascade.org/doc/refman/html/class_topo_d_s___shape.html '''
+        self.topo_types = (TopoDS_Shape, TopoDS_Solid, TopoDS_Compound, TopoDS_Shell, TopoDS_Face, TopoDS_Vertex, TopoDS_Edge, TopoDS_Wire, TopoDS_CompSolid)
+        # self.topo_types = (TopoDS_Solid, TopoDS_Compound)
+        # self.topo_types = (TopoDS_Solid, TopoDS_Compound, TopoDS_Shell, TopoDS_Face)
+        # self.topo_types = (TopoDS_Solid,)
 
-           self.enforce_unary = True
+        self.assembly_id = assembly_id
+        # self.OCC_dict = {}
 
-           self.renderer = ShapeRenderer()
-           self.PARTFIND_FOLDER_DEFAULT = "C:\_Work\_DCS project\__ALL CODE\_Repos\partfind\partfind for git"
+        self.default_label_part = 'Unnamed item'
+        self.default_label_ass = 'Unnamed item'
 
+        ''' Mid-grey for default shape colour '''
+        self.SHAPE_COLOUR_DEFAULT = Quantity_Color(0.5, 0.5, 0.5, Quantity_TOC_RGB)
 
+        self.enforce_unary = True
+
+        self.renderer = ShapeRenderer()
+        self.PARTFIND_FOLDER_DEFAULT = "C:\_Work\_DCS project\__ALL CODE\_Repos\partfind\partfind for git"
+
+        self.node_dict = {}
 
     @property
     def new_node_id(self):
         if not hasattr(self, 'id_counter'):
-            self.id_counter = 100
+            self.id_counter = 0
         self.id_counter += 1
+        while self.id_counter in self.nodes:
+            self.id_counter += 1
         return self.id_counter
 
 
@@ -967,207 +981,92 @@ class StepParse(nx.DiGraph):
 
 
 
-    def load_step(self, step_filename):
+    def get_screen_name(self, occ_name, shape):
 
-        self.nauo_lines          = []
-        self.prod_def_lines      = []
-        self.prod_def_form_lines = []
-        self.prod_lines          = []
-        self.filename = os.path.splitext(step_filename)[0]
+        if not hasattr(self, 'name_root_counter'):
+            self.name_root_counter = {}
+        if not hasattr(self, 'type_counter'):
+            self.type_counter = {}
 
-        self.step_filename = step_filename
+        ''' HR 13/05/21
+            If item is product -> name root = product name,
+            which assumes all products have a name,
+            otherwise root name is based on shape type;
+            lastly, call it "item" '''
+        if occ_name in self.product_names:
+            nm_root = occ_name
 
-        line_hold = ''
-        line_type = ''
+        elif shape:
+            # ''' Lower case, naive implementation '''
+            # nm_root = str(type(shape).__name__).rsplit('_', 1)[1]
+            ''' Upper case to match pythonocc behaviour
+                e.g. TopoDS_Solid -> SOLID, SOLID_1, SOLID_2, etc. '''
+            if not type(shape) in self.type_counter:
+                self.type_counter[type(shape)] = 0
+                nm_root = str(type(shape).__name__).rsplit('_', 1)[1].upper()
+            else:
+                nm_root = str(type(shape).__name__).rsplit('_', 1)[1].upper() + '_' + str(self.type_counter[type(shape)])
+            self.type_counter[type(shape)] += 1
 
-        # Find all search lines
-        with open(step_filename) as f:
-            for line in f:
-                # TH: read pointer of lines as they are read, so if the file has text wrap it will notice and add it to the following lines
-                index = re.search("#(.*)=", line)
-                if index:
-                    # TH: if not none then it is the start of a line so read it
-                    # want to hold line until it has checked next line
-                    # if next line is a new indexed line then save previous line
-                    if line_hold:
-                        if line_type == 'nauo':
-                            self.nauo_lines.append(line_hold)
-                        elif line_type == 'prod_def':
-                            self.prod_def_lines.append(line_hold)
-                        elif line_type == 'prod_def_form':
-                            self.prod_def_form_lines.append(line_hold)
-                        elif line_type == 'prod':
-                            self.prod_lines.append(line_hold)
-                        line_hold = ''
-                        line_type = ''
+        else:
+            nm_root = 'Item'
 
+        if not nm_root in self.name_root_counter:
+            self.name_root_counter[nm_root] = 0
+            nm_full = nm_root
+        else:
+            nm_full = nm_root + '_' + str(self.name_root_counter[nm_root])
 
+        self.name_root_counter[nm_root] += 1
 
-                    prev_index = True  # TH remember previous line had an index
-                    if 'NEXT_ASSEMBLY_USAGE_OCCURRENCE' in line:
-                        line_hold = line.rstrip()
-                        line_type = 'nauo'
-                    elif ('PRODUCT_DEFINITION ' in line or 'PRODUCT_DEFINITION(' in line):
-                        line_hold = line.rstrip()
-                        line_type = 'prod_def'
-                    elif 'PRODUCT_DEFINITION_FORMATION' in line:
-                        line_hold = line.rstrip()
-                        line_type = 'prod_def_form'
-                    elif ('PRODUCT ' in line or 'PRODUCT(' in line):
-                        line_hold = line.rstrip()
-                        line_type = 'prod'
-                else:
-                    # prev_index = False
-                    #TH: if end of file and previous line was held
-                    if 'ENDSEC;' in line:
-                        if line_hold:
-                            if line_type == 'nauo':
-                                self.nauo_lines.append(line_hold)
-                            elif line_type == 'prod_def':
-                                self.prod_def_lines.append(line_hold)
-                            elif line_type == 'prod_def_form':
-                                self.prod_def_form_lines.append(line_hold)
-                            elif line_type == 'prod':
-                                self.prod_lines.append(line_hold)
-                            line_hold = ''
-                            line_type = ''
-                    else:
-                        #TH: if not end of file
-                        line_hold = line_hold + line.rstrip()
+        return nm_full
 
 
 
-        self.nauo_refs          = []
-        self.prod_def_refs      = []
-        self.prod_def_form_refs = []
-        self.prod_refs          = []
+    @property
+    def product_names(self):
 
-        # TH: added 'replace(","," ").' to replace ',' with a space to make the spilt easier if there are not spaces inbetween the words'
-        # Find all (# hashed) line references and product names
-        # TH: it might be worth finding a different way of extracting data we do want rather than fixes to get rid of the data we don't
-        for j,el_ in enumerate(self.nauo_lines):
-            self.nauo_refs.append([el.rstrip(',')          for el in el_.replace(","," ").replace("="," ").replace(")"," ").split()                  if el.startswith('#')])
-        for j,el_ in enumerate(self.prod_def_lines):
-            self.prod_def_refs.append([el.rstrip(',')      for el in el_.replace(","," ").replace("="," ").replace(")"," ").split()                  if el.startswith('#')])
-        for j,el_ in enumerate(self.prod_def_form_lines):
-            self.prod_def_form_refs.append([el.rstrip(',') for el in el_.replace(","," ").replace("="," ").replace(")"," ").split()                  if el.startswith('#')])
-        for j,el_ in enumerate(self.prod_lines):
-            self.prod_refs.append([el.strip(',')           for el in el_.replace(","," ").replace("("," ").replace(")"," ").replace("="," ").split() if el.startswith('#')])
-            self.prod_refs[j].append(el_.split("'")[1])
-
-        # Get first two items in each sublist (as third is shape ref)
-        #
-        # First item is 'PRODUCT_DEFINITION' ref
-        # Second item is 'PRODUCT_DEFINITION_FORMATION <etc>' ref
-        self.prod_all_refs = [el[:2] for el in self.prod_def_refs]
-
-        # Match up all references down to level of product name
-        for j,el_ in enumerate(self.prod_all_refs):
-
-            # Add 'PRODUCT_DEFINITION' ref
-            for i,el in enumerate(self.prod_def_form_refs):
-                if el[0] == el_[1]:
-                    el_.append(el[1])
-                    break
-
-            # Add names from 'PRODUCT_DEFINITION' lines
-            for i,el in enumerate(self.prod_refs):
-                if el[0] == el_[2]:
-                    el_.append(el[2])
-                    break
+        ''' HR May 21 To get all product names from STEP files
+            This all assumes products have non-empty names,
+            otherwise logic would have to be completely revised
+            and would need to delve into OCC much further '''
+        if not hasattr(self, '_product_names'):
+            lines = fileutils.step_search(file = self.step_filename, keywords = ['PRODUCT ', 'PRODUCT('], exclusions = ['wibblybibbly'])[0]
+            self._product_names = [el.split(",")[0].split("(")[1].lstrip().rstrip().lstrip("'").rstrip("'").lstrip().rstrip() for el in lines]
+        return self._product_names
 
 
 
-        # Find all parent and child relationships (3rd and 2nd item in each sublist)
-        self.parent_refs = [el[1] for el in self.nauo_refs]
-        self.child_refs  = [el[2] for el in self.nauo_refs]
-
-        # Find distinct parts and assemblies via set operations; returns list, so no repetition of items
-        self.all_type_refs  = set(self.child_refs) | set(self.parent_refs)
-        self.ass_type_refs  = set(self.parent_refs)
-        self.part_type_refs = set(self.child_refs) - set(self.parent_refs)
-        #TH: find root node
-        self.root_type_refs = set(self.parent_refs) - set(self.child_refs)
-
-        # Create simple parts dictionary (ref + label)
-        self.part_dict     = {el[0]:el[3] for el in self.prod_all_refs}
-
-        print('Loaded STEP file')
-        self.create_tree()
-
-
-
-    def create_tree(self):
-
-        #TH: create tree diagram in newick format
-        #TH: find root node
-
-        #TH: check if there are any parts to make a tree from, if not don't bother
-        if self.part_dict == {}:
-            print('Cannot create tree: no parts present')
-            return
-
-        root_node_ref = list(self.root_type_refs)[0]
-
-        self.step_dict = odict()
-
-        root_id = self.new_node_id
-        self.step_dict[root_id] = root_node_ref
-
-        text = self.part_dict[self.step_dict[root_id]]
-        self.add_node(root_id, text = text, label = text)
-
-        def tree_next_layer(self, parent):
-            root_node = self.step_dict[parent]
-            for line in self.nauo_refs:
-                if line[1] == root_node:
-                    node = self.new_node_id
-                    self.step_dict[node] = str(line[2])
-                    text = self.part_dict[self.step_dict[node]]
-                    self.add_node(node, text = text, label = text)
-                    self.add_edge(parent, node)
-                    tree_next_layer(self, node)
-
-        tree_next_layer(self, root_id)
-
-        print('Created tree')
-        self.remove_redundants()
-
-
-
-    def OCC_read_file(self, filename):
+    def load_step_new(self, filename, get_subshapes = True):
+        ''' HR 11/05/21 Adapted from "read_step_file_with_names_colors"
+            in OCC.Extend.DataExchange here:
+            https://github.com/tpaviot/pythonocc-core/blob/master/src/Extend/DataExchange.py '''
+        ##Copyright 2018 Thomas Paviot (tpaviot@gmail.com)
+        ##
+        ##This file is part of pythonOCC.
+        ##
+        ##pythonOCC is free software: you can redistribute it and/or modify
+        ##it under the terms of the GNU Lesser General Public License as published by
+        ##the Free Software Foundation, either version 3 of the License, or
+        ##(at your option) any later version.
+        ##
+        ##pythonOCC is distributed in the hope that it will be useful,
+        ##but WITHOUT ANY WARRANTY; without even the implied warranty of
+        ##MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+        ##GNU Lesser General Public License for more details.
+        ##
+        ##You should have received a copy of the GNU Lesser General Public License
+        ##along with pythonOCC.  If not, see <http://www.gnu.org/licenses/>.
+        """ Returns list of tuples (topods_shape, label, color)
+        Use OCAF.
         """
-        HR 14/7/20
-        All pythonocc intialisation for 3D view
-        Adapted from src/Extend/DataExchange.py script from python-occ, here:
-        https://github.com/tpaviot/pythonocc-core
-        Copyright info below
-        """
+        if not os.path.isfile(filename):
+            raise FileNotFoundError("%s not found." % filename)
 
-        # Copyright 2018 Thomas Paviot (tpaviot@gmail.com)
+        self.step_filename = filename
 
-        # This file is part of pythonOCC.
-
-        # pythonOCC is free software: you can redistribute it and/or modify
-        # it under the terms of the GNU Lesser General Public License as published by
-        # the Free Software Foundation, either version 3 of the License, or
-        # (at your option) any later version.
-
-        # pythonOCC is distributed in the hope that it will be useful,
-        # but WITHOUT ANY WARRANTY; without even the implied warranty of
-        # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-        # GNU Lesser General Public License for more details.
-
-        # You should have received a copy of the GNU Lesser General Public License
-        # along with pythonOCC.  If not, see <http://www.gnu.org/licenses/>.
-
-        ''' Changed to odict to allow direct mapping to step_dict (see later) '''
-        output_shapes = odict()
-
-        # Create a handle to a document
         doc = TDocStd_Document(TCollection_ExtendedString("pythonocc-doc"))
 
-        # Get root assembly
         shape_tool = XCAFDoc_DocumentTool_ShapeTool(doc.Main())
         color_tool = XCAFDoc_DocumentTool_ColorTool(doc.Main())
         #layer_tool = XCAFDoc_DocumentTool_LayerTool(doc.Main())
@@ -1183,41 +1082,137 @@ class StepParse(nx.DiGraph):
         status = step_reader.ReadFile(filename)
         if status == IFSelect_RetDone:
             step_reader.Transfer(doc)
-            print('Transfer done')
 
+        ''' loc tracks spatial transformation through each level of assembly structure
+            i.e. for each IsAssembly level, but not for sub-shapes '''
         locs = []
 
-        def _get_sub_shapes(lab, loc):
 
-            l_subss = TDF_LabelSequence()
-            shape_tool.GetSubShapes(lab, l_subss)
-            #print("Nb subshapes   :", l_subss.Length())
-            l_comps = TDF_LabelSequence()
-            shape_tool.GetComponents(lab, l_comps)
-            #print("Nb components  :", l_comps.Length())
+
+        ''' Create graph structure for shape data '''
+        # self.occ_graph = StepParse()
+        # head = self.occ_graph.new_node_id
+        # self.occ_graph.add_node(head)
+        # self.occ_graph.nodes[head]['occ_label'] = None
+        # self.occ_graph.nodes[head]['occ_name'] = None
+        # self.occ_graph.nodes[head]['screen_name'] = ' == YOUR ADVERT HERE FOR £199 A MONTH == '
+        # self.occ_graph.nodes[head]['shape'] = (None, None)
+        # self.occ_graph.nodes[head]['is_subshape'] = False
+        # self.occ_graph.nodes[head]['is_product'] = False
+        head = self.new_node_id
+        self.add_node(head)
+        self.nodes[head]['occ_label'] = None
+        self.nodes[head]['occ_name'] = None
+        self.nodes[head]['screen_name'] = ' == YOUR ADVERT HERE FOR £199 A MONTH == '
+        self.nodes[head]['shape_raw'] = (None, None)
+        self.nodes[head]['shape_loc'] = (None, None)
+        self.nodes[head]['is_subshape'] = False
+        self.nodes[head]['is_product'] = False
+
+
+
+        def _get_sub_shapes(lab, loc):
+            #global cnt, lvl
+            #cnt += 1
+            #print("\n[%d] level %d, handling LABEL %s\n" % (cnt, lvl, _get_label_name(lab)))
             #print()
+            #print(lab.DumpToString())
+            #print()
+            #print("Is Assembly    :", shape_tool.IsAssembly(lab))
+            #print("Is Free        :", shape_tool.IsFree(lab))
+            #print("Is Shape       :", shape_tool.IsShape(lab))
+            #print("Is Compound    :", shape_tool.IsCompound(lab))
+            #print("Is Component   :", shape_tool.IsComponent(lab))
+            #print("Is SimpleShape :", shape_tool.IsSimpleShape(lab))
+            #print("Is Reference   :", shape_tool.IsReference(lab))
+
+            #users = TDF_LabelSequence()
+            #users_cnt = shape_tool.GetUsers(lab, users)
+            #print("Nr Users       :", users_cnt)
+
             name = lab.GetLabelName()
             # print("Name :", name)
 
+
+
+            ''' Properties common to assemblies and shapes
+                Assembly- and shape-specific properties added in if/else below '''
+            # node = self.occ_graph.new_node_id
+            # self.occ_graph.add_edge(self.parent, node)
+            # self.occ_graph.nodes[node]['occ_label'] = lab
+            # self.occ_graph.nodes[node]['occ_name'] = name
+            # self.occ_graph.nodes[node]['is_subshape'] = False
+            # if name in product_names:
+            #     is_product = True
+            # else:
+            #     is_product = False
+            # self.occ_graph.nodes[node]['is_product'] = is_product
+            # self.occ_graph.nodes[node]['screen_name'] = self.get_screen_name(name, None)
+            node = self.new_node_id
+            self.add_edge(self.parent, node)
+            self.nodes[node]['occ_label'] = lab
+            self.nodes[node]['occ_name'] = name
+            self.nodes[node]['is_subshape'] = False
+            if name in self.product_names:
+                is_product = True
+            else:
+                is_product = False
+            self.nodes[node]['is_product'] = is_product
+
+
+
             if shape_tool.IsAssembly(lab):
+
+                ''' Get components -> l_c '''
                 l_c = TDF_LabelSequence()
                 shape_tool.GetComponents(lab, l_c)
+                #print("Nb components  :", l_c.Length())
+                #print()
+
+                ''' Assembly-specific (i.e. non-shape) properties '''
+                self.nodes[node]['screen_name'] = self.get_screen_name(name, None)
+                # self.occ_graph.nodes[node]['shape'] = (None, None)
+                self.nodes[node]['shape_raw'] = (None, None)
+                self.nodes[node]['shape_loc'] = (None, None)
+
+
                 for i in range(l_c.Length()):
                     label = l_c.Value(i+1)
                     if shape_tool.IsReference(label):
+                        #print("\n########  reference label :", label)
                         label_reference = TDF_Label()
                         shape_tool.GetReferredShape(label, label_reference)
                         loc = shape_tool.GetLocation(label)
 
+                        self.parent = node
+
+                        ''' Append location for this level '''
                         locs.append(loc)
+                        #print(">>>>")
+                        #lvl += 1
                         _get_sub_shapes(label_reference, loc)
+                        #lvl -= 1
+                        #print("<<<<")
                         locs.pop()
 
-            elif shape_tool.IsSimpleShape(lab):
-                shape = shape_tool.GetShape(lab)
 
+
+            elif shape_tool.IsSimpleShape(lab):
+
+                ''' Get sub-shapes-> l_subss '''
+                l_subss = TDF_LabelSequence()
+                shape_tool.GetSubShapes(lab, l_subss)
+                #print("Nb subshapes   :", l_subss.Length())
+
+                #print("\n########  simpleshape label :", lab)
+                shape = shape_tool.GetShape(lab)
+                #print("    all ass locs   :", locs)
+
+                ''' Create location by applying all locations to that level in sequence
+                    as they are applied in sequence '''
                 loc = TopLoc_Location()
                 for l in locs:
+                    #print("    take loc       :", l)
                     loc = loc.Multiplied(l)
 
                 c = Quantity_Color(0.5, 0.5, 0.5, Quantity_TOC_RGB)  # default color
@@ -1230,26 +1225,49 @@ class StepParse(nx.DiGraph):
                     color_tool.SetInstanceColor(shape, 2, c)
                     colorSet = True
                     n = c.Name(c.Red(), c.Green(), c.Blue())
-                    # print('    Instance color Name & RGB: ', c, n, c.Red(), c.Green(), c.Blue())
+                    # print('    instance color Name & RGB: ', c, n, c.Red(), c.Green(), c.Blue())
 
                 if not colorSet:
                     if (color_tool.GetColor(lab, 0, c) or
                             color_tool.GetColor(lab, 1, c) or
                             color_tool.GetColor(lab, 2, c)):
+
                         color_tool.SetInstanceColor(shape, 0, c)
                         color_tool.SetInstanceColor(shape, 1, c)
                         color_tool.SetInstanceColor(shape, 2, c)
 
                         n = c.Name(c.Red(), c.Green(), c.Blue())
-                        # print('    Shape color Name & RGB: ', c, n, c.Red(), c.Green(), c.Blue())
+                        # print('    shape color Name & RGB: ', c, n, c.Red(), c.Green(), c.Blue())
 
-                shape_disp = BRepBuilderAPI_Transform(shape, loc.Transformation()).Shape()
-                if not shape_disp in output_shapes:
-                    output_shapes[shape_disp] = [lab.GetLabelName(), c]
+
+
+                ''' Shape-specific (i.e. non-assembly) properties '''
+                self.nodes[node]['screen_name'] = self.get_screen_name(name, shape)
+                # self.occ_graph.nodes[node]['shape'] = (shape, loc)
+                self.nodes[node]['shape_raw'] = (shape, loc)
+                self.nodes[node]['shape_loc'] = (BRepBuilderAPI_Transform(shape, loc.Transformation()).Shape(), c)
+                self.parent = node
+
+
+
+                # ''' Location (loc) is applied in sequence '''
+                # shape_disp = BRepBuilderAPI_Transform(shape, loc.Transformation()).Shape()
+
+                # if not shape_disp in output_shapes:
+                #     output_shapes[shape_disp] = [lab.GetLabelName(), c]
+
+
+
+                ''' Return if sub-shapes are not required '''
+                if not get_subshapes:
+                    return
+
+
 
                 for i in range(l_subss.Length()):
                     lab_subs = l_subss.Value(i+1)
                     shape_sub = shape_tool.GetShape(lab_subs)
+                    # print("\n########  simpleshape subshape label, type :", lab_subs.GetLabelName(), type(shape_sub))
 
                     c = Quantity_Color(0.5, 0.5, 0.5, Quantity_TOC_RGB)  # default color
                     colorSet = False
@@ -1261,7 +1279,7 @@ class StepParse(nx.DiGraph):
                         color_tool.SetInstanceColor(shape_sub, 2, c)
                         colorSet = True
                         n = c.Name(c.Red(), c.Green(), c.Blue())
-                        # print('    Instance color Name & RGB: ', c, n, c.Red(), c.Green(), c.Blue())
+                        # print('    instance color Name & RGB: ', c, n, c.Red(), c.Green(), c.Blue())
 
                     if not colorSet:
                         if (color_tool.GetColor(lab_subs, 0, c) or
@@ -1272,53 +1290,66 @@ class StepParse(nx.DiGraph):
                             color_tool.SetInstanceColor(shape, 2, c)
 
                             n = c.Name(c.Red(), c.Green(), c.Blue())
-                            # print('    Shape color Name & RGB: ', c, n, c.Red(), c.Green(), c.Blue())
-                    shape_to_disp = BRepBuilderAPI_Transform(shape_sub, loc.Transformation()).Shape()
+                            # print('    shape color Name & RGB: ', c, n, c.Red(), c.Green(), c.Blue())
 
-                    # position the subshape to display
-                    if not shape_to_disp in output_shapes:
-                        output_shapes[shape_to_disp] = [lab_subs.GetLabelName(), c]
+                    # ''' Location (loc) is common to all sub-shapes '''
+                    # shape_to_disp = BRepBuilderAPI_Transform(shape_sub, loc.Transformation()).Shape()
+
+                    # if not shape_to_disp in output_shapes:
+                    #     output_shapes[shape_to_disp] = [lab_subs.GetLabelName(), c]
+
+
+
+                    ''' Sub-shape-specific (i.e. non-shape, non-assembly) properties '''
+                    name_sub = lab_subs.GetLabelName()
+
+                    # node = self.occ_graph.new_node_id
+                    # self.occ_graph.add_edge(self.parent, node)
+                    # self.occ_graph.nodes[node]['occ_label'] = lab_subs
+                    # self.occ_graph.nodes[node]['occ_name'] = name_sub
+                    # self.occ_graph.nodes[node]['shape'] = (shape_sub, loc)
+                    # self.occ_graph.nodes[node]['screen_name'] = self.get_screen_name(name_sub, shape_sub)
+                    # self.occ_graph.nodes[node]['is_subshape'] = True
+                    # self.occ_graph.nodes[node]['is_product'] = False
+                    node = self.new_node_id
+                    self.add_edge(self.parent, node)
+                    self.nodes[node]['occ_label'] = lab_subs
+                    self.nodes[node]['occ_name'] = name_sub
+                    self.nodes[node]['shape_raw'] = (shape_sub, loc)
+                    self.nodes[node]['shape_loc'] = (BRepBuilderAPI_Transform(shape_sub, loc.Transformation()).Shape(), c)
+                    self.nodes[node]['screen_name'] = self.get_screen_name(name_sub, shape_sub)
+                    self.nodes[node]['is_subshape'] = True
+                    self.nodes[node]['is_product'] = False
+
 
 
 
         def _get_shapes():
             labels = TDF_LabelSequence()
+            ''' Free shapes are those not referred to by any other
+                1. If assembly structure present, this gets root item
+                2. If not, all items in flat structure
+                https://dev.opencascade.org/doc/refman/html/class_x_c_a_f_doc___shape_tool.html '''
             shape_tool.GetFreeShapes(labels)
+            #global cnt
+            #cnt += 1
+            print("Number of shapes at root :", labels.Length())
 
-
-            print("Number of shapes at root: ", labels.Length())
             for i in range(labels.Length()):
+
                 root_item = labels.Value(i+1)
-                print('Root item: ', root_item)
+
+                self.parent = head
                 _get_sub_shapes(root_item, None)
 
-        '''
-        HR 15/7/20
-        ----------
-        Want to link existing node IDs from create_tree() with OCC
-        Assumes file-read order is same for both...
-        ...and also OCC only gets "simple parts", i.e. leaves...
-        ...which is corrected for below
-
-        MUST CORRECT IN FUTURE TO BE SINGLE FILE-READ METHOD...
-        ...FOR BOTH GRAPH AND OCC/SHAPE DATA '''
-
         _get_shapes()
-        self.shapes = output_shapes
-        # return self.output_shapes
-        ''' Get all TopoDS_Solid objects in OCC dict '''
-        self.OCC_list  = [k for k in self.shapes if type(k) in self.topo_types]
-        '''' Get all leaves in step_dict (could also just get list from leaves method) '''
-        tree_list = [k for k in self.step_dict if k in self.leaves]
-
-        ''' Map master IDs to OCC objects '''
-        self.OCC_dict.update(dict(zip(tree_list, self.OCC_list)))
+        # return output_shapes
 
 
 
     ''' Calculate bounding box of shape
         ---
-        From PythonOCC here:
+        Adapted from PythonOCC here:
         https://github.com/tpaviot/pythonocc-demos/blob/master/examples/core_geometry_bounding_box.py
         Copyright information below
         --- '''
@@ -1367,57 +1398,35 @@ class StepParse(nx.DiGraph):
 
 
     ''' Image renderer (copied from StrEmbed) '''
-    def save_image(self, node, img_name = None):
-
-        ''' Default image name: unambiguous combination of:
-            cwd + STEP file name + node label/STEP line ref '''
-        if not img_name:
-            cwd = os.getcwd()
-            step_filename = self.remove_suffixes(self.step_filename)
-            node_label = self.nodes[node]['label']
-            # step_ref = [k for k,v in self.part_dict.items() if node_label in v][0]
-            # img_name = os.path.join(cwd, step_filename, step_ref) + '.jpg'
-            img_name = os.path.join(cwd, step_filename, node_label) + '.jpg'
-            # print('Image filename: ', img_name)
+    def quick_render(self, shape, colour = None, img_file = None):
 
         self.renderer.EraseAll()
 
-        ''' Get all parts contained by node, in case node is sub-assembly...
-            and also node itself, in case node is an individual part '''
-        children = nx.descendants(self, node)
-        children.add(node)
-        if not children:
-            print('No items to render')
-            return None
-
-        print('Children = ', children)
-
-        ''' Render each item, if OCC data exists for it in OCC_dict '''
-        for child in children:
-            if child in self.OCC_dict:
-                shape = self.OCC_dict[child]
-                label, c = self.shapes[shape]
-                print('Rendering shape for item', child)
-                self.renderer.DisplayShape(shape, color = Quantity_Color(c.Red(),
-                                                                         c.Green(),
-                                                                         c.Blue(),
-                                                                         Quantity_TOC_RGB))
-            else:
-                print('Cannot render item ', child, ' as not present as shape model')
+        if colour:
+            ''' Render in correct colour... '''
+            # label, c = self.shapes[shape]
+            c = colour
+            self.renderer.DisplayShape(shape, color = Quantity_Color(c.Red(),
+                                                                     c.Green(),
+                                                                     c.Blue(),
+                                                                     Quantity_TOC_RGB))
+        else:
+            ''' ...or in default colour (for better reference images), i.e. orange '''
+            self.renderer.DisplayShape(shape)
 
         try:
-            print('Fitting and dumping image ', img_name)
+            # print('Fitting and dumping image ', img_name)
             ''' Create directory if it doesn't already exist '''
-            img_path = os.path.split(img_name)[0]
+            img_path = os.path.split(img_file)[0]
             if not os.path.isdir(img_path):
                 os.mkdir(img_path)
 
             self.renderer.View.FitAll()
             self.renderer.View.ZFitAll()
-            self.renderer.View.Dump(img_name)
+            self.renderer.View.Dump(img_file)
             ''' Check if rendered and dumped, i.e. if image file exists '''
-            if os.path.exists(img_name):
-                print('Image saved to ', img_name)
+            if os.path.exists(img_file):
+                # print('Image saved to ', img_file)
                 image_saved_ok = True
             else:
                 print('Could not save image')
@@ -1428,52 +1437,167 @@ class StepParse(nx.DiGraph):
             print(e)
             image_saved_ok = False
 
-
         return image_saved_ok
 
 
 
+    def get_image_data(self, node, default_colour = False):
+
+        def render(nodes):
+
+            try:
+                self.renderer.EraseAll()
+
+                for node in nodes:
+
+                    if not default_colour:
+                        ''' Render in correct colour... '''
+                        shape, c = self.nodes[node]['shape_loc']
+                        self.renderer.DisplayShape(shape, color = Quantity_Color(c.Red(),
+                                                                                 c.Green(),
+                                                                                 c.Blue(),
+                                                                                 Quantity_TOC_RGB))
+                    else:
+                        ''' ...or in default colour (for better reference images), i.e. orange '''
+                        self.renderer.DisplayShape(shape)
+
+                self.renderer.View.FitAll()
+                self.renderer.View.ZFitAll()
+
+                # img = <DO IMAGE DATA GRAB HERE>
+                W,H = self.renderer.GetSize()
+                img_data = (W, H, self.renderer.GetImageData(W, H, Graphic3d_BufferType.Graphic3d_BT_RGB))
+                # img = wx.Image(W, H, img_data)
+                # ''' Then with "from PIL import Image"
+                # via https://github.com/tpaviot/pythonocc-core/issues/976 '''
+                # img = Image.frombytes('RGB', (W, H), img_data)
+                # img = img.rotate(180, expand=True)
+
+            except Exception as e:
+                print('Could not create image; exception follows')
+                print(e)
+                img_data = None
+
+            return img_data
+
+
+
+        ''' Grab node dict, shorthand '''
+        d = self.nodes[node]
+
+        ''' If already rendered (and stored in node dict), just return it '''
+        if 'image_data' in d:
+            if d['image_data']:
+                img_data = d['image_data']
+                print('Image data found in node dict')
+                return img_data
+        else:
+            print('Image not found in node dict; rendering...')
+
+        ''' If shape exists in node dict, render node
+            else (b/c node is assembly) get all non-sub-shapes and render all '''
+        if d['shape_loc'][0]:
+            _to_render = [node]
+        else:
+            _to_render = []
+            for el in nx.descendants(self, node):
+                d_sub = self.nodes[el]
+                ''' Add to render list if shape present and not sub-shape '''
+                if d_sub['shape_loc'][0] and not d_sub['is_subshape']:
+                    _to_render.append(el)
+
+        ''' Get image; default to "no image" png if not successful '''
+        if _to_render:
+            img_data = render(_to_render)
+            if img_data:
+                print('Successfully rendered image')
+        else:
+            img_data = None
+
+        return img_data
+
+
+
+    def split_and_render_new(self, path = None, subshapes = False):
+
+        ''' To grab all unique shapes with their names,
+            format for shapes dict is {shape: name} '''
+        shapes = {}
+        # product_names = self.product_names
+
+        for node in self.nodes:
+            print(node, self.nodes[node]['screen_name'])
+
+        for node in self.nodes:
+            d = self.nodes[node]
+            
+            ''' Skip if no shape '''
+            if not d['shape_raw'][0]:
+                continue
+            shape = d['shape_raw'][0]
+
+            ''' Skip rest if shape already grabbed or is sub-shape '''
+            if (shape in shapes):
+                # print('Duplicate shape found')
+                continue
+            if not subshapes and d['is_subshape']:
+                # print('Sub-shape found; ignoring')
+                continue
+
+            ''' Else go through naming logic and add to shape map
+                1. If product, get product name, as maps to shape,
+                2. Otherwise get screen name '''
+            if d['is_product']:
+                name = d['occ_name']
+            else:
+                name = d['screen_name']
+            shapes[shape] = name
+
+
+
+        ''' Abort if no shapes '''
+        if not shapes:
+            print('No shapes found; aborting...')
+            return
+
+
+        ''' Get cwd as path if none given '''
+        if not path:
+            path = os.getcwd()
+
+        folder = os.path.join(path, self.remove_suffixes(self.step_filename))
+        if not os.path.exists(folder):
+            print('Creating folder...')
+            os.makedirs(folder)
+
+        ''' Generate and save STEP and image files '''
+        for k,v in shapes.items():
+            step_file = os.path.join(folder, v + '.STEP')
+            if os.path.isfile(step_file):
+                print('Part model already exists; not saving')
+            else:
+                print('Saving STEP file for part: ', v)
+                DataExchange.write_step_file(k, step_file)
+
+            img_file = os.path.join(folder, v + '.jpg')
+            if os.path.isfile(img_file):
+                print('Part image file already exists; not saving')
+            else:
+                print('Saving image for part: ', v)
+                # self.save_image(node, img_file)
+                self.quick_render(k, img_file = img_file)
+
+
+
+    ''' HR 24/03/21
+        To load pre-calculated sim scores from file
+        and add graphlet sim scores to Excel (not present in old method)
+        BB, ML and GR scores all in common semi-matrix format '''
+
     ''' Save all constituent parts in STEP file to individual STEP files
         "path" is for saving everything
         "model_folder" is path to STEP models for similarity scores '''
-    def dump(self, partfind_folder = None, path = None, model_folder = None):
-
-        if not partfind_folder:
-            partfind_folder = self.PARTFIND_FOLDER_DEFAULT
-
-        ''' -------------------------------------------------------------- '''
-        ''' Import all partfind stuff from TH
-            For now, just sets/resets cwd and grabs code from scripts '''
-        cwd_old = os.getcwd()
-        os.chdir(partfind_folder)
-
-        from partfind_search_gui_hr import networkx_to_dgl
-        from step_to_graph import StepToGraph
-        from partgnn import PartGNN
-        from main import parameter_parser
-        import dgl
-
-        args = parameter_parser()
-        model = PartGNN(args)
-        model.load_model()
-
-        ''' Restore previous cwd '''
-        ''' -------------------------------------------------------------- '''
-        os.chdir(cwd_old)
-
-
-
-        ''' Adapted from TH's "partfind_search_gui_hr" and "step_to_graph"
-            Minimal code to get graphs of parts '''
-        def load_from_step(step_file):
-            # print("Loading STEP file for sim calc: ", step_file)
-            s_load = StepToGraph(step_file)
-            g_load = networkx_to_dgl(s_load.H)
-            face_g = g_load.node_type_subgraph(['face'])
-            g_out = dgl.to_homogeneous(face_g)
-            return g_out
-
-
+    def sims_to_excel(self, path = None, model_folder = None, default_value = -1):
 
         if not path:
             path = os.getcwd()
@@ -1495,60 +1619,91 @@ class StepParse(nx.DiGraph):
 
         ''' Get all unique parts by node ID to avoid duplication '''
         leaves = self.leaves
+        ''' HR 25/05/21 "uniques" here is not adequate since retiring step_dict
+            in favour of node-stored shapes; must find:
+            (1) all products + shape (assume common)
+            (2) each non-product shape (excluding sub-shapes);
+                    for the latter, naming is already done ("screen_name")
+                    so just grab first example of each shape
+                    then keep running list of (raw) shapes to avoid duplication '''
         uniques = {v:k for k,v in self.step_dict.items() if k in leaves}
         uniques_sorted = sorted(uniques)
-        # uniques = [v for k,v in uniques.items()]
         print('Got list of unique/distinct parts')
         print('Number: ', len(uniques))
 
 
 
         ''' Initialise Excel file for dumping data '''
-        # if not hasattr(self, 'bb_data'):
-        #     self.bb_data = {}
-        self.bb_data = {}
+        bb_data = {}
+        ml_data = {}
+        gr_data = {}
 
-        # if not hasattr(self, 'ss_data'):
-        #     self.ss_data = {}
-        self.ss_data = {}
-
-        data_file = os.path.join(folder, 'data.xlsx')
+        data_file = os.path.join(folder, 'data_all.xlsx')
         print('Full data file path: ', data_file)
         workbook = xlsxwriter.Workbook(data_file)
 
 
 
-        ''' Header sheet '''
-        header_sheet = workbook.add_worksheet('Information')
-        header_fields = ['STEP line ref', 'Part name/label']
-        for i,el in enumerate(header_fields):
-            header_sheet.write(0, i, el)
+        ''' Get pre-calculated sim scores from file '''
+        try:
+            bb_dict = fileutils.load_from_txt(os.path.join(model_folder, 'scores_bb.txt'))
+        except:
+            bb_dict = {}
+
+        try:
+            ml_dict = fileutils.load_from_txt(os.path.join(model_folder, 'scores.txt'))
+        except:
+            ml_dict = {}
+
+        try:
+            gr_dict = fileutils.load_from_txt(os.path.join(model_folder, 'scores_graphlet.txt'))
+        except:
+            gr_dict = {}
+
+        print(bb_dict, ml_dict, gr_dict)
+
+
+
+        '''
+        Meta sheet and headers for all other sheets
+        '''
+
+        ''' Meta sheet '''
+        meta_sheet = workbook.add_worksheet('Information')
+        meta_fields = ['STEP line ref', 'Part name/label']
+        for i,el in enumerate(meta_fields):
+            meta_sheet.write(0, i, el)
         for i,el in enumerate(uniques_sorted):
-            name = self.part_dict[el]
-            header_sheet.write(i+1, 0, el)
-            header_sheet.write(i+1, 1, name)
+            name = self.prod_dict[el]
+            meta_sheet.write(i+1, 0, el)
+            meta_sheet.write(i+1, 1, name)
 
-
-        ''' Bounding box (bb) sheet '''
-        bb_fields = ['STEP line ref', 'xmin', 'ymin', 'zmin', 'xmax', 'ymax', 'zmax', 'xmax-xmin', 'ymax-ymin', 'zmax-zmin']
-        bb_sheet = workbook.add_worksheet('BB data')
+        ''' Bounding box/aspect ratio (BB) sim scores sheet '''
+        bb_fields = uniques_sorted
+        bb_sheet = workbook.add_worksheet('BB sim score data')
         for i,el in enumerate(bb_fields):
-            bb_sheet.write(0, i, el)
+            bb_sheet.write(0, i+1, el)
+            bb_sheet.write(i+1, 0, el)
 
-        ''' Similarity scores (ss) sheet '''
-        ss_fields = uniques_sorted
-        ss_sheet = workbook.add_worksheet('Sim score data')
-        for i,el in enumerate(ss_fields):
-            ss_sheet.write(0, i+1, el)
-            ss_sheet.write(i+1, 0, el)
+        ''' Machine learning (ML) sim scores sheet '''
+        ml_fields = uniques_sorted
+        ml_sheet = workbook.add_worksheet('ML sim score data')
+        for i,el in enumerate(ml_fields):
+            ml_sheet.write(0, i+1, el)
+            ml_sheet.write(i+1, 0, el)
+
+        ''' Graphlet-based (GR) sim scores sheet '''
+        gr_fields = uniques_sorted
+        gr_sheet = workbook.add_worksheet('GR sim score data')
+        for i,el in enumerate(gr_fields):
+            gr_sheet.write(0, i+1, el)
+            gr_sheet.write(i+1, 0, el)
 
 
 
-        y = 0
-        # for prod_ref, node in uniques.items():
         for prod_ref in uniques_sorted:
 
-            name = self.part_dict[prod_ref]
+            name = self.prod_dict[prod_ref]
             node = uniques[prod_ref]
 
             '''
@@ -1562,7 +1717,9 @@ class StepParse(nx.DiGraph):
             else:
                 print('Saving STEP file for part: ', name)
                 print(step_path)
-                shape = self.OCC_dict[node]
+                ''' HR 25/05/21 Replaced OCC_dict use with shape from node dict '''
+                # shape = self.OCC_dict[node]
+                shape = self.nodes[node]['shape_loc'][0]
                 DataExchange.write_step_file(shape, step_path)
 
             '''
@@ -1576,78 +1733,78 @@ class StepParse(nx.DiGraph):
             else:
                 print('Saving image for part: ', name)
                 print(img_path)
-                self.save_image(node, img_path)
-
-            '''
-            Calculate and save bounding box data
-            '''
-            shape = self.OCC_dict[node]
-            self.bb_data[prod_ref] = self.get_boundingbox(shape)
-            print('Saving bounding box data for ', prod_ref)
-
-            bb_sheet.write(y+1, 0, prod_ref)
-            for i,el in enumerate(self.bb_data[prod_ref]):
-                bb_sheet.write(y+1, i+1, el)
-
-            y += 1
+                ''' HR 25/05/21 "save_image" obsolete;
+                    must replace with node dict-based shape retrieval '''
+                # self.save_image(node, img_path, default_colour = True)
 
 
 
-        ''' Re-run for ML similarity calculations
-            as must cycle through all STEP files for each part
-            so all must already be present '''
+        ''' Load sim scores and dump to Excel file '''
         y = 0
         _done = []
-        for prod_ref in uniques_sorted:
+        '''
+        Get similarity score data
+        '''
+        for ref1 in uniques_sorted:
 
-            _okay = True
-            name = self.part_dict[prod_ref]
-            node = uniques[prod_ref]
+            name1 = self.prod_dict[ref1] + '.STEP'
+            bb_data[ref1] = []
+            ml_data[ref1] = []
+            gr_data[ref1] = []
 
-            # print('Prod ref: ', prod_ref)
-            step_path = os.path.join(folder, name + '.STEP')
+            for ref2 in uniques_sorted:
+                if ref2 in _done:
+                    print('Skipping...')
+                    continue
+
+                name2 = self.prod_dict[ref2] + '.STEP'
+
+                if (name1,name2) in bb_dict:
+                    bb_score = bb_dict[(name1,name2)]
+                    print('Found')
+                elif (name2,name1) in bb_dict:
+                    bb_score = bb_dict[(name2,name1)]
+                    print('Found')
+                else:
+                    bb_score = default_value
+                    print('Not found: ', (name1,name2))
+
+                if (name1,name2) in ml_dict:
+                    ml_score = ml_dict[(name1,name2)]
+                    print('Found')
+                elif (name2,name1) in ml_dict:
+                    ml_score = ml_dict[(name2,name1)]
+                    print('Found')
+                else:
+                    ml_score = default_value
+                    print('Not found: ', (name1,name2))
+
+                if (name1,name2) in gr_dict:
+                    gr_score = gr_dict[(name1,name2)]
+                    print('Found')
+                elif (name2,name1) in gr_dict:
+                    gr_score = gr_dict[(name2,name1)]
+                    print('Found')
+                else:
+                    gr_score = default_value
+                    print('Not found: ', (name1,name2))
+
+                bb_data[ref1].append(bb_score)
+                ml_data[ref1].append(ml_score)
+                gr_data[ref1].append(gr_score)
 
             '''
-            Calculate and save similarity score data
+            Dump all scores to Excel file
+            offsetting by number of skipped entries to give triangular matrix
             '''
-            self.ss_data[prod_ref] = []
-            try:
-                g1 = load_from_step(step_path)
-            except:
-                print('Exception/error occurred; defaulting similarity to zero')
-                _okay = False
+            for i,el in enumerate(bb_data[ref1]):
+                bb_sheet.write(y+1, i+y+1, el)
+                ml_el = ml_data[ref1][i]
+                ml_sheet.write(y+1, i+y+1, ml_el)
+                gr_el = gr_data[ref1][i]
+                gr_sheet.write(y+1, i+y+1, gr_el)
 
-            if _okay:
-                for prod_ref2 in uniques_sorted:
-
-                    ''' 1/2 Skip if pair already calculated... '''
-                    if prod_ref2 in _done:
-                        print('Skipping: already done')
-                        continue
-
-                    name2 = self.part_dict[prod_ref2]
-
-                    # print('Prod ref: ', prod_ref2)
-                    step_path2 = os.path.join(folder, name2 + '.STEP')
-
-                    try:
-                        g2 = load_from_step(step_path2)
-                        score = model.test_pair(g1,g2)
-                    except:
-                        print('Exception/error occurred; defaulting similarity to zero')
-                        score = ''
-                    print('Comparing ', prod_ref, 'and ', prod_ref2)
-                    print(step_path, step_path2)
-                    print('Similarity: ', score)
-
-                    self.ss_data[prod_ref].append(score)
-
-            ''' 2/2 ...then offset by number of skipped entries
-                to give triangular matrix '''
-            for i,el in enumerate(self.ss_data[prod_ref]):
-                ss_sheet.write(y+1, i+y+1, el)
-
-            _done.append(prod_ref)
+            _done.append(ref1)
             print(_done)
 
             y += 1
@@ -1656,51 +1813,6 @@ class StepParse(nx.DiGraph):
 
         ''' Must close workbook! '''
         workbook.close()
-
-
-
-    ''' Get bounding box and similarity score data from Excel file
-        that has been saved via "dump"
-        ---
-        Loaded data exactly matches format of saved data '''
-    def load_bb_ss_data(self, file = None, overwrite_data = False):
-
-        if not file:
-            path = os.getcwd()
-            if not hasattr(self, 'step_filename'):
-                print('No STEP file present in assembly and none specified')
-                return None
-            folder = os.path.join(path, self.remove_suffixes(self.step_filename))
-            file = os.path.join(folder, 'data.xlsx')
-            print('Excel file path to read from: ', file)
-
-        if not os.path.isfile(file):
-            print('File not found')
-            return False
-
-        step_refs = []
-
-        bb_dict = {}
-        bb_raw = pd.read_excel(file, sheet_name = 'BB data')
-        bb_raw = bb_raw.to_numpy()
-        for el in bb_raw:
-            ref = el[0]
-            step_refs.append(ref)
-            bb_dict[ref] = el[1:].tolist()
-
-        ss_dict = {}
-        ss_raw = pd.read_excel(file, sheet_name = 'Sim score data')
-        ss_raw = ss_raw.to_numpy()
-        refs = [el for el in step_refs]
-        for i,el in enumerate(ss_raw):
-            ref = el[0]
-            # ss_dict[ref] = {}
-            # for _i,_el in enumerate(el[i+1:]):
-            #     ss_dict[ref][refs[_i]] = _el
-            ss_dict[ref] = el[i+1:].tolist()
-            refs.remove(ref)
-
-        return bb_dict, ss_dict
 
 
 
@@ -1726,6 +1838,8 @@ class StepParse(nx.DiGraph):
         ''' ...then remove in separate loop to avoid list changing size during previous loop '''
         for _node in _to_remove:
             self.remove_node(_node)
+            print('Removing node ', _node)
+        print('  Total nodes removed: ', len(_to_remove))
 
         print('Removed redundants')
 

@@ -114,16 +114,13 @@ def CreateBitmap(imgName, mask = wx.WHITE, size = None):
     if not size:
         size = (100,100)
 
-    # Ah gorrit...
     _bmp = getattr(images, imgName).GetBitmap()
     _im = _bmp.ConvertToImage()
 
-    # ...ah rescaled it...
     width, height = size
     _im = _im.Scale(width, height, wx.IMAGE_QUALITY_HIGH)
     _bmp = wx.Bitmap(_im)
 
-    # ...ah masked iroff
     if mask:
         _mask = wx.Mask(_bmp, mask)
         _bmp.SetMask(_mask)
@@ -192,8 +189,8 @@ class MyTree(ctc.CustomTreeCtrl):
             # They may not mean to, but they do
             children = []
             for parent in parents:
-                children = parent.GetChildren().copy()
                 # They fill you with the faults they had
+                children = parent.GetChildren().copy()
                 descendants.extend(children)
                 # And add some extra, just for you
                 parents = children
@@ -614,6 +611,7 @@ class MainWindow(wx.Frame):
 
         self.no_image_ass  = images.no_image_ass_png.GetBitmap()
         self.no_image_part = images.no_image_part_png.GetBitmap()
+        self.no_image      = images.no_image_png.GetBitmap()
 
         self.im_folder = 'Temp'
         self.im_path = os.path.join(os.getcwd(), self.im_folder)
@@ -1267,12 +1265,13 @@ class MainWindow(wx.Frame):
             self.assembly = _assembly
 
         ''' Load data, create nodes and edges, etc. '''
-        self.assembly.load_step(open_filename)
+        # self.assembly.load_step(open_filename)
+        self.assembly.load_step_new(open_filename)
         self._assembly_manager.AddToLattice(_id)
 
-        ''' OCC 3D data returned here '''
-        self.assembly.OCC_read_file(open_filename)
-        print('Loaded 3D data...')
+        # ''' OCC 3D data returned here '''
+        # self.assembly.OCC_read_file(open_filename)
+        # print('Loaded 3D data...')
 
         ''' Show parts list and lattice '''
         self.DisplayPartsList()
@@ -1317,8 +1316,10 @@ class MainWindow(wx.Frame):
         ''' Create root node... '''
         root_id = self.assembly.get_root()
         print('Found root:', root_id)
-        text = self.assembly.nodes[root_id]['text']
-        label = self.assembly.nodes[root_id]['label']
+        # text = self.assembly.nodes[root_id]['text']
+        # label = self.assembly.nodes[root_id]['label']
+        text = self.assembly.nodes[root_id]['screen_name']
+        label = self.assembly.nodes[root_id]['screen_name']
 
         ctc_root_item = self._page.partTree_ctc.AddRoot(text = text, ct_type = 1, data = {'id_': root_id, 'sort_id': root_id, 'label': label})
 
@@ -1342,11 +1343,13 @@ class MainWindow(wx.Frame):
 
                     ''' Text and label will differ if changed previously by user in parts view '''
                     try:
-                        label = self.assembly.nodes[node]['label']
+                        # label = self.assembly.nodes[node]['label']
+                        label = self.assembly.nodes[node]['screen_name']
                     except:
                         label = self.assembly.default_label_part
                     try:
-                        text = self.assembly.nodes[node]['text']
+                        # text = self.assembly.nodes[node]['text']
+                        text = self.assembly.nodes[node]['screen_name']
                     except:
                         text = self.assembly.default_label_part
 
@@ -1384,7 +1387,9 @@ class MainWindow(wx.Frame):
         print('IDs of item(s) selected:')
         for shape in _shapes:
             ''' Inverse dict look-up '''
-            item = [k for k,v in self.assembly.OCC_dict.items() if v == shape][-1]
+            # item = [k for k,v in self.assembly.OCC_dict.items() if v == shape][-1]
+            ''' HR 19/05/12 New version to look in node dicts for shape '''
+            item = [node for node in self.assembly.nodes if self.assembly.nodes[node]['shape_loc'][0] == shape][-1]
             to_select.append(item)
             print(item)
 
@@ -1421,33 +1426,39 @@ class MainWindow(wx.Frame):
 
 
 
+    ''' HR 19/05/21 Refreshed to work with new STEP parsing method '''
     def Update3DView(self, items = None):
 
         '''
         transparency = None:    shaded
         transparency = 1:       wireframe
         '''
-        def display_part(part, transparency = None):
-            # if part in self.assembly.OCC_dict:
-            shape = self.assembly.OCC_dict[part]
-            label, c = self.assembly.shapes[shape]
-            ais_shape = self._page.occ_panel._display.DisplayShape(shape,
-                                                                     color = Quantity_Color(c.Red(),
-                                                                                            c.Green(),
-                                                                                            c.Blue(),
-                                                                                            Quantity_TOC_RGB),
-                                                                     transparency = transparency)
+        def display_shape(shape, c, transparency = None):
+            # shape = self.assembly.get_shape_with_position(shape_raw, loc)
+            self._page.occ_panel._display.DisplayShape(shape,
+                                                       color = Quantity_Color(c.Red(),
+                                                                              c.Green(),
+                                                                              c.Blue(),
+                                                                              Quantity_TOC_RGB),
+                                                       transparency = transparency)
 
         self._page.occ_panel._display.EraseAll()
 
-        ''' Display parts as shaded if selected, transparent/wireframe if not '''
+        ''' Get all selected items that are not sub-shapes; transparent/wireframe if not '''
         selected_items = self.selected_items
+        # to_display = [el for el in self.assembly.nodes if not self.assembly.nodes[el]['is_subshape']]
+
+        # for item in to_display:
         for item in self.assembly.nodes:
-            if item in self.assembly.OCC_dict:
-                if item in selected_items:
-                    display_part(item)
-                else:
-                    display_part(item, transparency = 1)
+            shape, c = self.assembly.nodes[item]['shape_loc']
+            ''' Don't display assemblies, i.e. nodes without shapes '''
+            if not shape:
+                continue
+            if item in selected_items:
+                display_shape(shape, c)
+            else:
+                display_shape(shape, c, transparency = 1)
+            # print('Displaying node ', item)
 
         self._page.occ_panel._display.View.FitAll()
         self._page.occ_panel._display.View.ZFitAll()
@@ -1633,15 +1644,6 @@ class MainWindow(wx.Frame):
 
 
 
-    def render_by_id(self, node):
-        ''' MUST grab/specify image name here, as default naming in
-            "save_image" is not suitable '''
-        img_name = self.get_image_name(node)
-        image_saved_ok = self.assembly.save_image(node, img_name)
-        return image_saved_ok
-
-
-
     def get_image_name(self, node, suffix = '.jpg'):
         ''' Image file type and "suffix" here (jpg) is dictated by python-occ "Dump" method
             which can't be changed without delving into C++ '''
@@ -1652,76 +1654,32 @@ class MainWindow(wx.Frame):
 
 
 
+    ''' HR 24/05/21
+        To overhaul to account for now-improved OCC-based shape parsing
+        and for sub-shapes; also images are held in memory, not saved,
+        to avoid temporary folder(s) being created '''
     def TreeItemChecked(self, event):
-
-        ''' Always return something! '''
-        def get_image(node):
-
-            print('Getting image...')
-            print('Node ID = ', node)
-            img = None
-            img_name = None
-
-            ''' Check if ID has CAD data, which is the case if it comes from STEP file...
-                If not, check if any descendants have CAD data, in which case send to renderer...
-                which also finds those descendants '''
-            if node not in self.assembly.step_dict:
-                if node in self.assembly.leaves:
-                    print('Item is leaf')
-                    img_name = self.no_image_part
-                else:
-                    print('Item is assembly')
-                    descendants = nx.descendants(self.assembly, node)
-                    _to_render = []
-                    for item in descendants:
-                        if item in self.assembly.step_dict:
-                            _to_render.append(item)
-                    ''' If _to_render isn't empty, then render '''
-                    print('To render: ', _to_render)
-                    if _to_render:
-                        if self.render_by_id(node):
-                            img_name = self.get_image_name(node)
-                            print('Image name from parts in subassembly:', img_name)
-                        else:
-                            img_name = self.no_image_ass
-                    else:
-                        img_name = self.no_image_ass
-
-            else:
-                ''' ...else if it does have a CAD model, create image of all contained parts '''
-                ''' Just render image each time, don't check for existing image file...
-                    as parts contained by item may change and not be shown in saved image '''
-                if self.render_by_id(node):
-                    img_name = self.get_image_name(node)
-                else:
-                    if node in self.assembly.leaves:
-                        img_name = self.no_image_part
-                    else:
-                        img_name = self.no_image_ass
-
-            ''' Ultimately "img" here is from either:
-                1. "no_image_<part or ass>" -> ConvertToImage(), or
-                2. Image file just created  -> Image() '''
-            if img_name:
-                try:
-                    img = wx.Image(img_name, wx.BITMAP_TYPE_ANY)
-                    print('Image from file: ', img_name)
-                except:
-                    img = img_name.ConvertToImage()
-                    print('Image from bitmap object: ', img_name)
-            return img
-
-
 
         ''' Get checked item and search for corresponding image '''
         item = event.GetItem()
         node  = self._page.ctc_dict_inv[item]
 
+        print('Getting image...')
+        print('Node ID = ', node)
+
         selected_items = self.selected_items
 
         if item.IsChecked():
-            ''' Get image; method always returns something '''
-            img = get_image(node)
+            ''' Get image data '''
+            img_data = self.assembly.get_image_data(node)
+            if img_data:
+                W,H,data = img_data
+                img = wx.Image(W,H,data)
+                ''' Workaround here until image data can be rotated,
+                    as images rendered upside down '''
+                img = img.Rotate180()
+            else:
+                img = self.no_image.ConvertToImage()
 
             ''' Create/add button in slct_panel
                 ---
@@ -1736,9 +1694,9 @@ class MainWindow(wx.Frame):
                 ---
                 Data is list, i.e. same format as "selected_items"
                 but ctc lacks "get selections" method for checked items '''
-            self._page.button_dict[node]         = button
-            self._page.button_dict_inv[button]  = node
-            self._page.button_img_dict[node]     = img
+            self._page.button_dict[node]       = button
+            self._page.button_dict_inv[button] = node
+            self._page.button_img_dict[node]   = img
 
             ''' Toggle if already selected elsewhere '''
             if node in selected_items:
@@ -1818,7 +1776,7 @@ class MainWindow(wx.Frame):
         ''' Get plot object '''
         plot_obj = self._assembly_manager._lattice
 
-        '''' Tolerance for node/line picker; tweak if necessary '''
+        ''' Tolerance for node/line picker; tweak if necessary '''
         picker_tol = len(plot_obj.leaves)/100
 
         ''' Retain zoom settings for later '''
@@ -1828,8 +1786,6 @@ class MainWindow(wx.Frame):
         if event.button == 3:
             self.OnRightClick(event)
             return
-
-
 
         ''' ...otherwise select item
             ---
