@@ -101,30 +101,12 @@ import fileutils
 
 
 
+
 """
 HR 26/08/2020
 ShapeRenderer adapted from pythonocc script "wxDisplay"
 https://github.com/tpaviot/pythonocc-core
-Copyright info below
 """
-
-##Copyright 2008-2017 Thomas Paviot (tpaviot@gmail.com)
-##
-##This file is part of pythonOCC.
-##
-##pythonOCC is free software: you can redistribute it and/or modify
-##it under the terms of the GNU Lesser General Public License as published by
-##the Free Software Foundation, either version 3 of the License, or
-##(at your option) any later version.
-##
-##pythonOCC is distributed in the hope that it will be useful,
-##but WITHOUT ANY WARRANTY; without even the implied warranty of
-##MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-##GNU Lesser General Public License for more details.
-##
-##You should have received a copy of the GNU Lesser General Public License
-##along with pythonOCC.  If not, see <http://www.gnu.org/licenses/>.
-
 class ShapeRenderer(OCCViewer.Viewer3d):
     '''
     HR 17/7/20
@@ -1031,13 +1013,15 @@ class StepParse(nx.DiGraph):
             otherwise logic would have to be completely revised
             and would need to delve into OCC much further '''
         if not hasattr(self, '_product_names'):
-            lines = fileutils.step_search(file = self.step_filename, keywords = ['PRODUCT ', 'PRODUCT('], exclusions = ['wibblybibbly'])[0]
-            self._product_names = [el.split(",")[0].split("(")[1].lstrip().rstrip().lstrip("'").rstrip("'").lstrip().rstrip() for el in lines]
+            lines = fileutils.step_search(file = self.step_filename, keywords = ['PRODUCT ', 'PRODUCT('], exclusions = ['kevinphillipsbong'])[0]
+            ''' HR 03/06/21 Product name parsing corrected '''
+            # self._product_names = [line.split(",")[0].split("(")[1].lstrip().rstrip().lstrip("'").rstrip("'").lstrip().rstrip() for line in lines]
+            self._product_names = [line.split("PRODUCT")[1].split(",")[0].rstrip().lstrip().lstrip("(").lstrip().lstrip("'").strip("'") for line in lines]
         return self._product_names
 
 
 
-    def load_step_new(self, filename, get_subshapes = True):
+    def load_step(self, filename, get_subshapes = False):
         ''' HR 11/05/21 Adapted from "read_step_file_with_names_colors"
             in OCC.Extend.DataExchange here:
             https://github.com/tpaviot/pythonocc-core/blob/master/src/Extend/DataExchange.py '''
@@ -1090,15 +1074,6 @@ class StepParse(nx.DiGraph):
 
 
         ''' Create graph structure for shape data '''
-        # self.occ_graph = StepParse()
-        # head = self.occ_graph.new_node_id
-        # self.occ_graph.add_node(head)
-        # self.occ_graph.nodes[head]['occ_label'] = None
-        # self.occ_graph.nodes[head]['occ_name'] = None
-        # self.occ_graph.nodes[head]['screen_name'] = ' == YOUR ADVERT HERE FOR £199 A MONTH == '
-        # self.occ_graph.nodes[head]['shape'] = (None, None)
-        # self.occ_graph.nodes[head]['is_subshape'] = False
-        # self.occ_graph.nodes[head]['is_product'] = False
         head = self.new_node_id
         self.add_node(head)
         self.nodes[head]['occ_label'] = None
@@ -1137,17 +1112,6 @@ class StepParse(nx.DiGraph):
 
             ''' Properties common to assemblies and shapes
                 Assembly- and shape-specific properties added in if/else below '''
-            # node = self.occ_graph.new_node_id
-            # self.occ_graph.add_edge(self.parent, node)
-            # self.occ_graph.nodes[node]['occ_label'] = lab
-            # self.occ_graph.nodes[node]['occ_name'] = name
-            # self.occ_graph.nodes[node]['is_subshape'] = False
-            # if name in product_names:
-            #     is_product = True
-            # else:
-            #     is_product = False
-            # self.occ_graph.nodes[node]['is_product'] = is_product
-            # self.occ_graph.nodes[node]['screen_name'] = self.get_screen_name(name, None)
             node = self.new_node_id
             self.add_edge(self.parent, node)
             self.nodes[node]['occ_label'] = lab
@@ -1171,7 +1135,6 @@ class StepParse(nx.DiGraph):
 
                 ''' Assembly-specific (i.e. non-shape) properties '''
                 self.nodes[node]['screen_name'] = self.get_screen_name(name, None)
-                # self.occ_graph.nodes[node]['shape'] = (None, None)
                 self.nodes[node]['shape_raw'] = (None, None)
                 self.nodes[node]['shape_loc'] = (None, None)
 
@@ -1231,7 +1194,6 @@ class StepParse(nx.DiGraph):
                     if (color_tool.GetColor(lab, 0, c) or
                             color_tool.GetColor(lab, 1, c) or
                             color_tool.GetColor(lab, 2, c)):
-
                         color_tool.SetInstanceColor(shape, 0, c)
                         color_tool.SetInstanceColor(shape, 1, c)
                         color_tool.SetInstanceColor(shape, 2, c)
@@ -1243,7 +1205,6 @@ class StepParse(nx.DiGraph):
 
                 ''' Shape-specific (i.e. non-assembly) properties '''
                 self.nodes[node]['screen_name'] = self.get_screen_name(name, shape)
-                # self.occ_graph.nodes[node]['shape'] = (shape, loc)
                 self.nodes[node]['shape_raw'] = (shape, loc)
                 self.nodes[node]['shape_loc'] = (BRepBuilderAPI_Transform(shape, loc.Transformation()).Shape(), c)
                 self.parent = node
@@ -1285,9 +1246,9 @@ class StepParse(nx.DiGraph):
                         if (color_tool.GetColor(lab_subs, 0, c) or
                                 color_tool.GetColor(lab_subs, 1, c) or
                                 color_tool.GetColor(lab_subs, 2, c)):
-                            color_tool.SetInstanceColor(shape, 0, c)
-                            color_tool.SetInstanceColor(shape, 1, c)
-                            color_tool.SetInstanceColor(shape, 2, c)
+                            color_tool.SetInstanceColor(shape_sub, 0, c)
+                            color_tool.SetInstanceColor(shape_sub, 1, c)
+                            color_tool.SetInstanceColor(shape_sub, 2, c)
 
                             n = c.Name(c.Red(), c.Green(), c.Blue())
                             # print('    shape color Name & RGB: ', c, n, c.Red(), c.Green(), c.Blue())
@@ -1303,14 +1264,6 @@ class StepParse(nx.DiGraph):
                     ''' Sub-shape-specific (i.e. non-shape, non-assembly) properties '''
                     name_sub = lab_subs.GetLabelName()
 
-                    # node = self.occ_graph.new_node_id
-                    # self.occ_graph.add_edge(self.parent, node)
-                    # self.occ_graph.nodes[node]['occ_label'] = lab_subs
-                    # self.occ_graph.nodes[node]['occ_name'] = name_sub
-                    # self.occ_graph.nodes[node]['shape'] = (shape_sub, loc)
-                    # self.occ_graph.nodes[node]['screen_name'] = self.get_screen_name(name_sub, shape_sub)
-                    # self.occ_graph.nodes[node]['is_subshape'] = True
-                    # self.occ_graph.nodes[node]['is_product'] = False
                     node = self.new_node_id
                     self.add_edge(self.parent, node)
                     self.nodes[node]['occ_label'] = lab_subs
@@ -1518,7 +1471,7 @@ class StepParse(nx.DiGraph):
 
 
 
-    def split_and_render_new(self, path = None, subshapes = False):
+    def split_and_render(self, path = None, subshapes = False):
 
         ''' To grab all unique shapes with their names,
             format for shapes dict is {shape: name} '''
@@ -1944,6 +1897,7 @@ class StepParse(nx.DiGraph):
             leaves_in[sub] = nx.descendants(self, sub) - subassemblies
 
         return leaves_in
+
 
 
     ''' Memoise combinations '''

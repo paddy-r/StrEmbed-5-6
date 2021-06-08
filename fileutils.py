@@ -72,9 +72,9 @@ def load_from_txt(file):
 def step_search(file = None, keywords = None, exclusions = None, any_mode = True):
 
     if not file:
-        # file = "C:\_Work\_DCS project\__ALL CODE\_Repos\StrEmbed-5-6\StrEmbed-5-6 for git\PARKING_TROLLEY.STEP"
+        file = "C:\_Work\_DCS project\__ALL CODE\_Repos\StrEmbed-5-6\StrEmbed-5-6 for git\PARKING_TROLLEY.STEP"
         # file = "C:\_Work\_DCS project\__ALL CODE\_Repos\StrEmbed-5-6\StrEmbed-5-6 for git\Torch Assembly.STEP"
-        file = "C:\_Work\_DCS project\__ALL CODE\_Repos\StrEmbed-5-6\StrEmbed-5-6 for git\cakestep.stp"
+        # file = "C:\_Work\_DCS project\__ALL CODE\_Repos\StrEmbed-5-6\StrEmbed-5-6 for git\cakestep.stp"
 
     if not keywords:
         # keywords = ['NEXT_', 'PRODUCT']

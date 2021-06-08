@@ -754,13 +754,6 @@ class MainWindow(wx.Frame):
 
 
 
-    ''' HR 25/02/21
-        Basic XLSX reader for files saved using "xlsx_write" '''
-    def xlsx_read(self, full_path):
-        pass
-
-
-
     def get_selected_assemblies(self):
 
         self.AddText('Trying to get selected assemblies...')
@@ -842,14 +835,8 @@ class MainWindow(wx.Frame):
         # print('Edges:', _g.edges)
 
         # return _map
-
-        print('Dumping data...')
-        try:
-            self.assembly.dump()
-            print('Done!')
-        except:
-            print("Just couldn't do it, boss!")
-
+        pass
+f
 
 
     def OnRecon(self, event = None):
@@ -1070,8 +1057,7 @@ class MainWindow(wx.Frame):
             self.assembly = _assembly
 
         ''' Load data, create nodes and edges, etc. '''
-        # self.assembly.load_step(open_filename)
-        self.assembly.load_step_new(open_filename)
+        self.assembly.load_step(open_filename)
         self._assembly_manager.AddToLattice(_id)
 
         # ''' OCC 3D data returned here '''
@@ -1163,7 +1149,7 @@ class MainWindow(wx.Frame):
                     self._page.ctc_dict[node]         = ctc_item
                     self._page.ctc_dict_inv[ctc_item] = node
 
-        self._page.partTree_ctc.ExpandAll()
+        # self._page.partTree_ctc.ExpandAll()
 
         ''' Sort all tree items '''
         self._page.partTree_ctc.SortAllChildren(self._page.partTree_ctc.GetRootItem())
@@ -1342,7 +1328,7 @@ class MainWindow(wx.Frame):
         print('Done toolbar "Show"')
 
         ''' Update lattice panel layout '''
-        self.latt_panel.Layout()
+        # self.latt_panel.Layout()
         print('Done layout')
 
 
