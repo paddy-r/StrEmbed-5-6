@@ -1,0 +1,14 @@
+:: setting up environment to run StrEmbed etc.
+conda create --name strembed
+conda activate strembed
+
+:: all necessary package installations
+pip install wxpython
+pip install matplotlib
+pip install networkx
+pip install nltk
+pip install scipy
+conda install -c conda-forge pythonocc-core=7.5.1
+
+:: then install spyder through Anaconda or with command below
+conda install -c anaconda spyder
