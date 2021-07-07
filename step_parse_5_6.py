@@ -25,19 +25,16 @@ Version 5.5'''
 '''HR 02/12/20 onwards
 Version 5.6 '''
 
-# Ordered dictionary
-from collections import OrderedDict as odict
-
-# Regular expression module
-import re
+# # Regular expression module
+# import re
 
 # Natural Language Toolkit module, for Levenshtein distance
 import nltk
 
 import numpy as np
-from scipy.special import comb, binom
+from scipy.special import binom
 # from math import log
-import pandas as pd
+# import pandas as pd
 
 # # For powerset construction
 # from itertools import chain, combinations
@@ -56,8 +53,8 @@ import matplotlib as mpl
 #TH: useful for working with files
 import os
 
-''' For data exchange export '''
-import xlsxwriter
+# ''' For data exchange export '''
+# import xlsxwriter
 
 # HR 10/7/20 All python-occ imports for 3D viewer
 # from OCC.Core.TopoDS import TopoDS_Shape
@@ -96,9 +93,66 @@ from OCC.Core.BRepBndLib import brepbndlib_Add
 # from OCC.Core.BRepPrimAPI import BRepPrimAPI_MakeBox, BRepPrimAPI_MakeCylinder
 from OCC.Core.BRepMesh import BRepMesh_IncrementalMesh
 
-''' PartGNN interaction '''
-import fileutils
 
+
+def remove_suffixes(_str, suffixes = ('.stp', '.step', '.STP', '.STEP')):
+    ''' endswith accept tuple '''
+    while _str.endswith(suffixes):
+        _str = os.path.splitext(_str)[0]
+    return _str
+
+
+
+''' HR 26/04/21
+    To get lines (e.g. in STEP file) with certain keywords present or not
+    Adapted from earlier script
+    Keep here for now but not best place for it '''
+def step_search(file, keywords = None, exclusions = None, any_mode = True):
+
+    if not file:
+        print('File not found; aborting')
+        return
+
+    if not keywords:
+        keywords = ['NEXT_']
+        # keywords = ['MANIFOLD', 'PRODUCT ', 'CLOSED', 'ADVANCED']
+
+    if not exclusions:
+        exclusions = ['kevinphilipsbong']
+
+    results = []
+
+    # with open(file) as f:
+    #     for i,line in enumerate(f):
+    #         if any(word in line for word in keywords) and not any(_word in line for _word in exclusions):
+    #             results.append(line)
+
+    ''' HR 4/5/21 updated to account for lines running over '''
+    with open(file) as f:
+        ''' Create empty running line to append text to '''
+        full_line = ''
+        for i,line in enumerate(f):
+            ''' Append to running line, removing trailing newline chars '''
+            full_line += line.replace('\n', '')
+            ''' If ending line, do actual search... '''
+            if line.endswith(';\n'):
+                if any_mode:
+                    if any(word in full_line for word in keywords) and not any(_word in full_line for _word in exclusions):
+                        results.append(full_line)
+                else:
+                    if all(word in full_line for word in keywords) and not any(_word in full_line for _word in exclusions):
+                        results.append(full_line)
+                ''' ...and make new empty running line '''
+                full_line = ''
+
+    keyword_dict = {}
+    for keyword in keywords:
+        keyword_dict[keyword] = []
+        for line in results:
+            if keyword in line:
+                keyword_dict[keyword].append(line)
+
+    return results, keyword_dict
 
 
 
@@ -561,6 +615,7 @@ class AssemblyManager():
 
 
     ''' ----------------------------------------------------------------------
+        ADD TO/REMOVE FROM LATTICE
         ----------------------------------------------------------------------
     '''
 
@@ -630,11 +685,17 @@ class AssemblyManager():
             2. GET NODE MAP BETWEEN DOMINANT AND NEW ASSEMBLIES
             3. ADD NEW ASSEMBLY TO LATTICE GRAPH
         '''
-        results = StepParse.map_nodes(_a1, _a2)
+        results = self.map_nodes(_a1, _a2)
 
         ''' Get node map (n1:n2) and lists of unmapped nodes in a1 and a2 '''
         _map = results[0]
         _u1, _u2 = results[1]
+        
+        ''' Show results '''
+        print('Mapping results: ')
+        f = 'occ_name'
+        for k,v in results[0].items():
+            print('a1 node: ', _a1.nodes[k][f], 'a2 node: ', _a2.nodes[v][f])
 
         '''
             NODES
@@ -715,6 +776,614 @@ class AssemblyManager():
                     self._lattice.remove_node(_node)
 
         return True
+
+
+
+    ''' ----------------------------------------------------------------------
+        HR June 21: All similarity/assembly matching methods here,
+            refactored from StepParse class methods
+        ----------------------------------------------------------------------
+    '''
+
+
+
+    '''
+    HR June 21 Must refactor this, moved from StepParse class method
+    NOT TESTED
+    '''
+    # ''' ---------------
+    # TREE RECONCILIATION
+    # HR 3/6/20
+    # Based on Networkx "optimal_edit_paths" method
+
+    # a1 and a2 are assemblies 1 and 2
+    # Call as "paths, cost = StepParse.Reconcile(a1, a2)"
+    # ----------------'''
+
+    def Reconcile(self, id1, id2, lev_tol = 0.1):
+
+        ''' -------------------------------------------
+        STAGE 1: MAP NODES/EDGES B/T THE TWO ASSEMBLIES
+
+        Currently done simply via tags
+        More sophisticated metrics to be implemented in future
+
+        Method of assembly class (StepParse) to set item tags to their IDs
+        --------------------------------------------'''
+        a1 = self._mgr[id1]
+        a2 = self._mgr[id2]
+
+        a1.set_all_tags()
+        a2.set_all_tags()
+
+
+
+        def similarity(str1, str2):
+
+            _lev_dist  = nltk.edit_distance(str1, str2)
+            _sim = 1 - _lev_dist/max(len(str1), len(str2))
+
+            return _lev_dist, _sim
+
+
+
+        # def remove_special_chars(_str):
+
+        #     # Strip out special characters
+        #     _str = re.sub('[!@#$_]', '', _str)
+
+        #     return _str
+
+
+
+        ''' Comparing nodes directly gives equality simply if both are NX nodes...
+            ...i.e. same object type, but this isn't good enough...'
+            ...so equality in this context defined as having same tags '''
+        def return_eq(item1, item2):
+
+            _eq = False
+
+            tag1 = item1['tag']
+            tag2 = item2['tag']
+
+            ''' 1. Simple equality test based on tags
+                (which are just IDs copied to "tag" field)... '''
+            _eq = tag1 == tag2
+            if _eq:
+                print('Mapped ', tag1, 'to ', tag2)
+
+            # ''' 2. ...then do test based on parts contained by nodes... '''
+            # if tag1 and tag2 in (a1.nodes or a2.nodes) and not _eq:
+            #     try:
+            #         _eq = item1['parts'] == item2['parts']
+            #     except:
+            #         pass
+
+            # ''' 3. ...then do test based on Levenshtein distance b/t items, if leaves '''
+            # if not _eq and (tag1 and tag2 in (a1.leaves or a2.leaves)):
+
+            #     tag1_ = remove_special_chars(tag1)
+            #     tag2_ = remove_special_chars(tag2)
+
+            #     try:
+            #         dist = similarity(tag1_, tag2_)
+            #         _eq  = dist < lev_tol
+            #     except:
+            #         pass
+
+            # if _eq:
+            #     print('Nodes/edges mapped:     ', tag1, tag2)
+            # else:
+            #     pass
+
+            return _eq
+            # return item1 == item2
+
+
+
+
+        def MyReconcile(a1, a2, node_match = None, edge_match = None):
+
+            a1.set_all_tags()
+            a2.set_all_tags()
+
+            n1 = set(a1.nodes)
+            n2 = set(a2.nodes)
+            e1 = set(a1.edges)
+            e2 = set(a2.edges)
+
+            node_deletions = []
+            node_additions = []
+            edge_deletions = []
+            edge_additions = []
+
+            ''' Find additions and deletions by set difference (relative complement) '''
+            #
+            for _node in n1 - n2:
+                node_deletions.append((_node, None))
+            print('Node deletions: ', node_deletions)
+
+            for _node in n2 - n1:
+                node_additions.append((None, _node))
+            print('Node deletions: ', node_additions)
+
+            for _edge in e1 - e2:
+                edge_deletions.append((_edge, None))
+            print('Edge deletions: ', edge_deletions)
+
+            for _edge in e2 - e1:
+                edge_additions.append((None, _edge))
+            print('Edge additions: ', edge_additions)
+
+
+
+            paths = [list(set(node_deletions + node_additions)), list(set(edge_deletions + edge_additions))]
+
+            cost = len(node_deletions) + len(node_additions) + len(edge_deletions) + len(edge_additions)
+
+            return paths, cost
+
+
+        ''' -----------------------------------------------------
+        STAGE 2: FIND EDIT PATHS VIA NETWORKX AND GENERATE REPORT
+        ------------------------------------------------------'''
+
+        # paths, cost_nx = nx.optimal_edit_paths(a1, a2, node_match = return_eq, edge_match = return_eq)
+        # paths = paths[0]
+
+        paths, cost = MyReconcile(a1, a2, node_match = return_eq, edge_match = return_eq)
+
+        node_edits = [el for el in paths[0] if el[0] != el[1]]
+        edge_edits = [el for el in paths[1] if el[0] != el[1]]
+        cost_from_edits = len(node_edits) + len(edge_edits)
+
+        print('Node edits: {}\nEdge edits: {}\nTotal cost (Networkx): {}\nTotal cost (no. of edits): {}'.format(
+            node_edits, edge_edits, cost, cost_from_edits))
+
+        return paths, cost, cost_from_edits, node_edits, edge_edits
+
+
+
+
+
+    ''' HR June 21 Must refactor this, moved from StepParse class method '''
+    def similarity(self, str1, str2):
+
+        if type(str1) != str:
+            str1 = str(str1)
+        if type(str2) != str:
+            str2 = str(str2)
+
+        _lev_dist = nltk.edit_distance(str1, str2)
+        _sim = 1 - _lev_dist/max(len(str1), len(str2))
+
+        return _lev_dist, _sim
+
+
+
+    def map_nodes(self, a1, a2, **kwargs):
+
+        _mapped = {}
+
+
+
+        '''
+        1.  Easy part of mapping: exact 1:1 mappings
+            and get dupe map for any unmapped exact matches
+        '''
+        _dupemap, _newitems = self.map_exact(a1,a2)
+        _mapped.update(_newitems)
+
+
+
+        ''' Then calculate similarity matrix for each duplicate group
+            This effectively allows matching by similarity components
+            other than (but also including) exact node-name matches,
+            e.g. parent node names (or whatever the user specifies
+            via "weight" values in "node_sim") '''
+
+        _sim = {}
+        for k,v in _dupemap.items():
+            _sim[k] = self.node_sim(a1, a2, k, v)
+
+
+
+        ''' Get total similarity (i.e. sum of all measures)
+            "_sim" contains each separately; [0] element is total value '''
+        _totals = {k:v[0] for k,v in _sim.items()}
+
+
+
+        '''
+        2.  Get all singular mappings within duplicate groupings,
+            i.e. occurrence of max value is one, and remove from grouping
+        '''
+
+        _tomap = {k:v for k,v in _dupemap.items()}
+        _totalscopy = {k:v for k,v in _totals.items()}
+
+        for k,v in _tomap.items():
+
+            ''' Get singular mappings and update global map '''
+            _newlymapped = self.get_by_max(_totals[k])
+
+            ''' Remove old/create new dict items if any mappings made above '''
+            if _newlymapped:
+
+                ''' Add new entries to master map '''
+                _mapped.update(_newlymapped)
+
+                ''' Get new entries with already-mapped items removed... '''
+                _newdupe, _newtotals = self.remap_entries(k, v, _newlymapped, _totalscopy[k])
+
+                ''' ...then update dicts with new entries '''
+                if _newdupe:
+                    _dupemap.update(_newdupe)
+                if _newtotals:
+                    _totals.update(_newtotals)
+
+                ''' Remove old entries with "pop";
+                    'None' default in "pop" avoids exception if item not found '''
+                _dupemap.pop(k, None)
+                _totals.pop(k, None)
+
+
+
+        for k,v in _totals.items():
+
+            ''' Reform sub-groupings within each duplicate grouping
+                "_valuelen" should be two or more for all entries now,
+                as all single-occurrence values removed above '''
+
+            _newentries = self.reform_entries(k, _dupemap[k], _totals[k])
+            _dupemap.pop(k, None)
+            _dupemap.update(_newentries)
+
+
+
+        '''
+        3.  Map remaining exact duplicate groupings, which all now have v = 1 due to reforming above
+        '''
+
+        _tomap = {k:v for k,v in _dupemap.items()}
+
+        for k,v in _tomap.items():
+
+            ''' Remove from map of duplicates '''
+            _dupemap.pop(k)
+
+            _newones = self.map_multi_grouping(k, v)
+            _mapped.update(_newones)
+
+
+
+        ''' Put together all unmapped items '''
+        _u1 = [el for el in a1.nodes if el not in _mapped]
+        _u2 = [el for el in a2.nodes if el not in _mapped.values()]
+
+
+
+        '''
+        4.  Now need to continue mapping all nodes without exact label matches
+        '''
+
+        ''' Get total similarity (i.e. sum of all measures), currently element [0] '''
+        if _u1 and _u2:
+            _sim_u = self.node_sim(a1, a2, _u1, _u2, weight = [1,0,1,0,0])[0]
+
+            ''' First job, as in previous sections: get any easy mappings where
+                max sim value appears once, and remove from dict '''
+            _newmap = self.get_by_max(_sim_u)
+            if _newmap:
+                _mapped.update(_newmap)
+
+                for node1 in _newmap:
+                    _u1.remove(node1)
+                for node2 in _newmap.values():
+                    _u2.remove(node2)
+
+                _dupenew, _simnew = self.remap_entries(_u1, _u2, _newmap, _sim_u)
+                _dupemap.update(_dupenew)
+
+                # ''' Next stage is to get sim groupings
+                #     i.e. where max sim value appears more than once '''
+                # _newentries = self.reform_entries(tuple(_u1), tuple(_u2), _simnew)
+                # print('New sim map by reforming: ', _newentries)
+
+
+
+        # return _mapped, (_u1, _u2), _sim, _dupemap, _totals, _tomap, _simnew
+        return _mapped, (_u1, _u2)
+
+
+
+    def node_sim(self, a1, a2, nodes1 = None, nodes2 = None, weight = [1,0,1,0,0], C1 = 0, C2 = 0, field = 'occ_name'):
+        ''' Weights apply to similarity of following metrics (by index):
+            0. Depth of nodes in tree (i.e. from root)
+            1. Number of siblings
+            2. Number of children
+            3. Name of parent '''
+
+        print('Running "node_sim"')
+
+        if not nodes1:
+            nodes1 = a1.nodes
+        if not nodes2:
+            nodes2 = a2.nodes
+
+        # if type(nodes1) is not list:
+        #     nodes1 = [nodes1]
+        # if type(nodes2) is not list:
+        #     nodes2 = [nodes2]
+
+        _r1 = a1.get_root()
+        _r2 = a2.get_root()
+
+        _sim_label = {}
+        _sim_depth = {}
+        _sim_sibs = {}
+        _sim_children = {}
+        _sim_parent = {}
+        _sim = {}
+
+        for n1 in nodes1:
+            _sim_label[n1] = {}
+            _sim_depth[n1] = {}
+            _sim_sibs[n1] = {}
+            _sim_children[n1] = {}
+            _sim_parent[n1] = {}
+            _sim[n1] = {}
+
+            for n2 in nodes2:
+
+                ''' Get node label similarity '''
+                # print('n1, n2, field:')
+                # print(n1, n2, field)
+                
+                _sim_label[n1][n2] = self.similarity(a1.nodes[n1][field], a2.nodes[n2][field])[1]
+
+
+
+                ''' Get tree-depth similarity '''
+                _d1 = nx.shortest_path_length(a1, _r1, n1)
+                _d2 = nx.shortest_path_length(a2, _r2, n2)
+                if (_d1 == 0) and (_d2 == 0):
+                    c = C1
+                elif (_d1 == 0) != (_d2 == 0):
+                    c = C2
+                else:
+                    c = min(_d1, _d2)/max(_d1, _d2)
+                _sim_depth[n1][n2] = c
+
+
+
+                ''' Get parents, where None is default if no parent... '''
+                _p1 = next(a1.predecessors(n1), None)
+                _p2 = next(a2.predecessors(n2), None)
+                ''' ...then get parent label similarity, if both parents exist '''
+                if (_p1 == None) and (_p2 == None):
+                    c = C1
+                elif (_p1 == None) != (_p2 == None):
+                    c = C2
+                else:
+                    c = self.similarity(a1.nodes[_p1][field], a2.nodes[_p2][field])[1]
+                _sim_parent[n1][n2] = c
+
+
+
+                ''' Get number of siblings... '''
+                try:
+                    _ns1 = len([el for el in a1.successors(_p1)]) - 1
+                    _ns2 = len([el for el in a2.successors(_p2)]) - 1
+                except:
+                    _ns1 = 0
+                    _ns2 = 0
+                ''' ...then get similarity '''
+                if (_ns1 == 0) and (_ns2 == 0):
+                    c = C1
+                elif (_ns1 == 0) != (_ns2 == 0):
+                    c = C2
+                else:
+                    c = min(_ns1, _ns2)/max(_ns1, _ns2)
+                _sim_sibs[n1][n2] = c
+
+
+
+                ''' Get number of children... '''
+                _nc1 = len([el for el in a1.successors(n1)])
+                _nc2 = len([el for el in a2.successors(n2)])
+                ''' ...then get similarity '''
+                if (_nc1 == 0) and (_nc2 == 0):
+                    c = C1
+                elif (_nc1 == 0) != (_nc2 == 0):
+                    c = C2
+                else:
+                    c = min(_nc1, _nc2)/max(_nc1, _nc2)
+                _sim_children[n1][n2] = c
+
+
+                _norm = sum(weight)
+                ''' Get total (aggregate) similarity '''
+                _sim[n1][n2] = (_sim_label[n1][n2]*weight[0] \
+                        + _sim_depth[n1][n2]*weight[1] \
+                        + _sim_parent[n1][n2]*weight[2] \
+                        + _sim_sibs[n1][n2]*weight[3] \
+                        + _sim_children[n1][n2]*weight[4])/_norm
+
+        return _sim, _sim_label, _sim_depth, _sim_parent, _sim_sibs, _sim_children
+
+
+
+    ''' Get all mappings by exact matching of field '''
+    def map_exact(self, a1, a2, nodes1 = None, nodes2 = None, _field = 'occ_name'):
+        print('Running "map_exact"')
+
+        if (not nodes1) and (not nodes2):
+            nodes1 = a1.nodes
+            nodes2 = a2.nodes
+        elif (not nodes1) != (not nodes2):
+            return None
+
+        _map = {}
+
+        _values = set([a1.nodes[el][_field] for el in a1.nodes])
+        _field_dict = {}
+
+        for el in _values:
+            _n1 = [_el for _el in a1.nodes if a1.nodes[_el][_field] == el]
+            _n2 = [_el for _el in a2.nodes if a2.nodes[_el][_field] == el]
+            if _n1 and _n2:
+                if len(_n1) == 1 and len(_n2) == 1:
+                    ''' If single-value mapping, then map... '''
+                    if _n1[0] not in _map:
+                        _map[_n1[0]] = _n2[0]
+                else:
+                    ''' ...else create dupe dict entry '''
+                    _field_dict[tuple(_n1)] = tuple(_n2)
+
+        return _field_dict, _map
+
+
+
+    ''' Get mappings by max value
+        If "singles_only" is true, only map for single-occurrence max sim values
+        Else map anyway, which means first node2 found with max sim value is mapped '''
+    def get_by_max(self, _sim, singles_only = True):
+        print('Running "get_by_max"')
+
+        _map = {}
+
+        nodes1 = _sim.keys()
+
+        ''' Loop over node1 items, which are contained in key of "_sim" '''
+        for node1 in nodes1:
+            _simdict = _sim[node1]
+            ''' Remove already-mapped entries '''
+            for _done2 in _map.values():
+                _simdict.pop(_done2, None)
+            ''' Short-circuit if _simdict empty
+                This will happen when fewer n1 than n2 '''
+            if not _simdict:
+                return _map
+
+            _max = max([el for el in _simdict.values()])
+            _occ = sum(value == _max for value in _simdict.values())
+
+            ''' Get valid (i.e. not already mapped) k-v pairs in simdict '''
+            if (singles_only and _occ == 1) or not singles_only:
+                node2 = [_k for _k,_v in _simdict.items() if _v == _max][0]
+                _map[node1] = node2
+
+        return _map
+
+
+
+    def remap_entries(self, k, v, _dupe, _sim):
+        print('Running "remap_entries"')
+
+        ''' Start building new dupe map elements... '''
+        _toremove1 = [el for el in _dupe]
+        _toremove2 = [el for el in _dupe.values()]
+
+        _n1 = tuple([el for el in k if el not in _toremove1])
+        _n2 = tuple([el for el in v if el not in _toremove2])
+
+        ''' ...and new total sim dict entry '''
+        _newv = {_k:_v for _k,_v in _sim.items() if _k in _n1}
+        _klist = list(_newv)
+        for el in _klist:
+            for _el in _toremove2:
+                if _el in _newv[el]:
+                    _newv[el].pop(_el, None)
+
+        _dupenew = {}
+        _simnew = {}
+        ''' Check that n1 and n2 both have items in, otherwise would be redundant... '''
+        if (len(_n1) > 0) and (len(_n2) > 0):
+            ''' ...then actually create entries... '''
+            _dupenew[_n1] = _n2
+            _simnew[_n1] = _newv
+
+        return _dupenew, _simnew
+
+
+
+    ''' HR 24/11/20
+        reform_entries not working as intended when tested with torch assembly
+        and HHC's alternative assembly with four bulbs
+        Problem is matching nodes within multiplicity groupings '''
+    def reform_entries(self, nodes1, nodes2, _sim):
+        print('Running "reform_entries"')
+
+        nodes1 = list(nodes1)
+        nodes2 = list(nodes2)
+
+        ''' HR 26/11/20 Workaround to avoid problems for node sets with differing sizes
+            Larger problems with this method remain, as described above '''
+        if len(nodes1) != len(nodes2):
+            return {tuple(nodes1):tuple(nodes2)}
+
+        _first = nodes1[0]
+        _firstdict = _sim[_first]
+        _firstvalueset = set(_firstdict.values())
+
+        if len(_firstvalueset) == 1:
+            return {tuple(nodes1):tuple(nodes2)}
+
+        _sims = list(_firstdict.values())
+
+        _newentries = {}
+
+        for el in _firstvalueset:
+
+            _i = [i for i,val in enumerate(_sims) if val == el]
+            _n1 = [nodes1[i] for i in _i]
+            _n2 = [nodes2[i] for i in _i]
+
+            ''' Reform grouping; no need to rebuild totals dict as not used after this '''
+            _newentries[tuple(_n1)] = tuple(_n2)
+
+        return _newentries
+
+
+
+    ''' Map same-sim-value grouping
+        (a) by same node IDs or
+        (b) in numerical order '''
+    def map_multi_grouping(self, k, v):
+        print('Running "map_multi_grouping"')
+
+        _toremove = []
+        _newmap = {}
+
+        _klist = sorted([el for el in k])
+        _vlist = sorted([el for el in v])
+
+        ''' First match any with the same IDs... '''
+        for el in _klist:
+            if el in _vlist:
+                _newmap[el] = el
+                _toremove.append(el)
+
+        for el in _toremove:
+            _klist.remove(el)
+            _vlist.remove(el)
+
+        ''' ...then match the remainder in numerical order
+            N.B. "zip" truncates to length of smaller list '''
+        if _klist and _vlist:
+            _remainder = dict(zip(_klist, _vlist))
+            for _k,_v in _remainder.items():
+                _newmap[_k] = _v
+
+        return _newmap
+
+
+
+    ''' ----------------------------------------------------------------------
+        ALL GRAPH/LATTICE PLOT METHODS HERE
+        ----------------------------------------------------------------------
+    '''
 
 
 
@@ -881,6 +1550,93 @@ class AssemblyManager():
 
 
 
+    ''' ----------------------------------------------------------------------
+        ALL PROJECT/LATTICE DATA EXCHANGE HERE
+        ----------------------------------------------------------------------
+    '''
+
+
+
+    ''' HR June 21 Method removed from StrEmbed
+        Dumps all basic project/lattice, assembly and node info:
+            Node ID, label/text, parent
+        Keep for now, can reuse for larger "save" functionality later '''
+    # ''' HR 25/02/21
+    #     Basic XLSX output for whole lattice (i.e. all assemblies) '''
+    # def xlsx_write(self, _ids = None):
+    
+    #     def get_header(_id, page):
+    #         mgr = self._assembly_manager._mgr
+    #         header = []
+    #         header.append(mgr[_id].assembly_id)
+    #         header.append(page.name)
+    #         header.append(page.filename_fullpath)
+    #         return header
+    
+    #     def get_output_data(_id, node):
+    #         ass = self._assembly_manager._mgr[_id]
+    #         data = []
+    #         data.append(node)
+    #         try:
+    #             data.append(ass.nodes[node]['label'])
+    #         except:
+    #             data.append('')
+    #         try:
+    #             data.append(ass.nodes[node]['text'])
+    #         except:
+    #             data.append('')
+    #         try:
+    #             data.append(ass.get_parent(node))
+    #         except:
+    #             data.append('None (root)')
+    #         return data
+    
+    #     header_fields = ['Assembly ID', 'Assembly name', 'STP/STEP file']
+    #     y_offset = len(header_fields) + 2
+    
+    #     fields = ['Node ID', 'Label', 'Text', 'Parent ID', ]
+    
+    #     save_file = 'torch_project.xlsx'
+    
+    #     excel_file = os.getcwd() + '\\' + save_file
+    #     workbook = xlsxwriter.Workbook(excel_file)
+    
+    #     '''Export all assemblies if none specified '''
+    #     if not _ids:
+    #         _ids = [el for el in self._assembly_manager._mgr]
+    
+    #     ''' Create worksheet for each assembly to be exported '''
+    #     sheet_dict = {}
+    #     for _id in _ids:
+    #         sheet_dict[_id] = workbook.add_worksheet()
+    #         page = [k for k,v in self._notebook_manager.items() if v == _id][0]
+    
+    #         ''' Write main header... '''
+    #         header_data = get_header(_id, page)
+    #         for i,el in enumerate(header_fields):
+    #             sheet_dict[_id].write(i, 0, el)
+    #             sheet_dict[_id].write(i, 1, header_data[i])
+    
+    #         ''' ...and node fields header '''
+    #         for i,el in enumerate(fields):
+    #             sheet_dict[_id].write(y_offset-1,i,el)
+    
+    #         ''' Get all nodes still present in CTC '''
+    #         nodes = list(page.ctc_dict)
+    
+    #         counter = 0
+    #         for node in nodes:
+    #             data = get_output_data(_id, node)
+    #             for i,el in enumerate(data):
+    #                 x = i
+    #                 y = counter + y_offset
+    #                 sheet_dict[_id].write(y, x, data[i])
+    #             counter += 1
+    
+    #     workbook.close()
+
+
+
 
 class StepParse(nx.DiGraph):
 
@@ -942,12 +1698,12 @@ class StepParse(nx.DiGraph):
 
 
 
-    def print_all_items(self):
-        print('\nAll nodes and edges:')
-        for node in self.nodes:
-            print(node, self.nodes[node])
-        for edge in self.edges:
-            print(edge, self.edges[edge])
+    # def print_all_items(self):
+    #     print('\nAll nodes and edges:')
+    #     for node in self.nodes:
+    #         print(node, self.nodes[node])
+    #     for edge in self.edges:
+    #         print(edge, self.edges[edge])
 
 
 
@@ -1013,7 +1769,7 @@ class StepParse(nx.DiGraph):
             otherwise logic would have to be completely revised
             and would need to delve into OCC much further '''
         if not hasattr(self, '_product_names'):
-            lines = fileutils.step_search(file = self.step_filename, keywords = ['PRODUCT ', 'PRODUCT('], exclusions = ['kevinphillipsbong'])[0]
+            lines = step_search(file = self.step_filename, keywords = ['PRODUCT ', 'PRODUCT('], exclusions = ['kevinphillipsbong'])[0]
             ''' HR 03/06/21 Product name parsing corrected '''
             # self._product_names = [line.split(",")[0].split("(")[1].lstrip().rstrip().lstrip("'").rstrip("'").lstrip().rstrip() for line in lines]
             self._product_names = [line.split("PRODUCT")[1].split(",")[0].rstrip().lstrip().lstrip("(").lstrip().lstrip("'").strip("'") for line in lines]
@@ -1178,6 +1934,8 @@ class StepParse(nx.DiGraph):
                     #print("    take loc       :", l)
                     loc = loc.Multiplied(l)
 
+                ''' HR June 21 some code duplication for colour assignment
+                    but didn't work when reduced to single block '''
                 c = Quantity_Color(0.5, 0.5, 0.5, Quantity_TOC_RGB)  # default color
                 colorSet = False
                 if (color_tool.GetInstanceColor(shape, 0, c) or
@@ -1239,7 +1997,7 @@ class StepParse(nx.DiGraph):
                         color_tool.SetInstanceColor(shape_sub, 1, c)
                         color_tool.SetInstanceColor(shape_sub, 2, c)
                         colorSet = True
-                        n = c.Name(c.Red(), c.Green(), c.Blue())
+                        # n = c.Name(c.Red(), c.Green(), c.Blue())
                         # print('    instance color Name & RGB: ', c, n, c.Red(), c.Green(), c.Blue())
 
                     if not colorSet:
@@ -1250,7 +2008,7 @@ class StepParse(nx.DiGraph):
                             color_tool.SetInstanceColor(shape_sub, 1, c)
                             color_tool.SetInstanceColor(shape_sub, 2, c)
 
-                            n = c.Name(c.Red(), c.Green(), c.Blue())
+                            # n = c.Name(c.Red(), c.Green(), c.Blue())
                             # print('    shape color Name & RGB: ', c, n, c.Red(), c.Green(), c.Blue())
 
                     # ''' Location (loc) is common to all sub-shapes '''
@@ -1297,100 +2055,6 @@ class StepParse(nx.DiGraph):
 
         _get_shapes()
         # return output_shapes
-
-
-
-    ''' Calculate bounding box of shape
-        ---
-        Adapted from PythonOCC here:
-        https://github.com/tpaviot/pythonocc-demos/blob/master/examples/core_geometry_bounding_box.py
-        Copyright information below
-        --- '''
-    #Copyright 2017 Thomas Paviot (tpaviot@gmail.com)
-    ##
-    ##This file is part of pythonOCC.
-    ##
-    ##pythonOCC is free software: you can redistribute it and/or modify
-    ##it under the terms of the GNU Lesser General Public License as published by
-    ##the Free Software Foundation, either version 3 of the License, or
-    ##(at your option) any later version.
-    ##
-    ##pythonOCC is distributed in the hope that it will be useful,
-    ##but WITHOUT ANY WARRANTY; without even the implied warranty of
-    ##MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    ##GNU Lesser General Public License for more details.
-    ##
-    ##You should have received a copy of the GNU Lesser General Public License
-    ##along with pythonOCC.  If not, see <http://www.gnu.org/licenses/>.
-    def get_boundingbox(self, shape, tol = 1e-6, use_mesh = True):
-        """ return the bounding box of the TopoDS_Shape `shape`
-        Parameters
-        ----------
-        shape : TopoDS_Shape or a subclass such as TopoDS_Face
-            the shape to compute the bounding box from
-        tol: float
-            tolerance of the computed boundingbox
-        use_mesh : bool
-            a flag that tells whether or not the shape has first to be meshed before the bbox
-            computation. This produces more accurate results
-        """
-        bbox = Bnd_Box()
-        bbox.SetGap(tol)
-        if use_mesh:
-            mesh = BRepMesh_IncrementalMesh()
-            mesh.SetParallelDefault(True)
-            mesh.SetShape(shape)
-            mesh.Perform()
-            if not mesh.IsDone():
-                raise AssertionError("Mesh not done.")
-        brepbndlib_Add(shape, bbox, use_mesh)
-
-        xmin, ymin, zmin, xmax, ymax, zmax = bbox.Get()
-        return xmin, ymin, zmin, xmax, ymax, zmax, xmax-xmin, ymax-ymin, zmax-zmin
-
-
-
-    ''' Image renderer (copied from StrEmbed) '''
-    def quick_render(self, shape, colour = None, img_file = None):
-
-        self.renderer.EraseAll()
-
-        if colour:
-            ''' Render in correct colour... '''
-            # label, c = self.shapes[shape]
-            c = colour
-            self.renderer.DisplayShape(shape, color = Quantity_Color(c.Red(),
-                                                                     c.Green(),
-                                                                     c.Blue(),
-                                                                     Quantity_TOC_RGB))
-        else:
-            ''' ...or in default colour (for better reference images), i.e. orange '''
-            self.renderer.DisplayShape(shape)
-
-        try:
-            # print('Fitting and dumping image ', img_name)
-            ''' Create directory if it doesn't already exist '''
-            img_path = os.path.split(img_file)[0]
-            if not os.path.isdir(img_path):
-                os.mkdir(img_path)
-
-            self.renderer.View.FitAll()
-            self.renderer.View.ZFitAll()
-            self.renderer.View.Dump(img_file)
-            ''' Check if rendered and dumped, i.e. if image file exists '''
-            if os.path.exists(img_file):
-                # print('Image saved to ', img_file)
-                image_saved_ok = True
-            else:
-                print('Could not save image')
-                image_saved_ok = False
-
-        except Exception as e:
-            print('Could not dump image to file; exception follows')
-            print(e)
-            image_saved_ok = False
-
-        return image_saved_ok
 
 
 
@@ -1471,304 +2135,6 @@ class StepParse(nx.DiGraph):
 
 
 
-    def split_and_render(self, path = None, subshapes = False):
-
-        ''' To grab all unique shapes with their names,
-            format for shapes dict is {shape: name} '''
-        shapes = {}
-        # product_names = self.product_names
-
-        for node in self.nodes:
-            print(node, self.nodes[node]['screen_name'])
-
-        for node in self.nodes:
-            d = self.nodes[node]
-            
-            ''' Skip if no shape '''
-            if not d['shape_raw'][0]:
-                continue
-            shape = d['shape_raw'][0]
-
-            ''' Skip rest if shape already grabbed or is sub-shape '''
-            if (shape in shapes):
-                # print('Duplicate shape found')
-                continue
-            if not subshapes and d['is_subshape']:
-                # print('Sub-shape found; ignoring')
-                continue
-
-            ''' Else go through naming logic and add to shape map
-                1. If product, get product name, as maps to shape,
-                2. Otherwise get screen name '''
-            if d['is_product']:
-                name = d['occ_name']
-            else:
-                name = d['screen_name']
-            shapes[shape] = name
-
-
-
-        ''' Abort if no shapes '''
-        if not shapes:
-            print('No shapes found; aborting...')
-            return
-
-
-        ''' Get cwd as path if none given '''
-        if not path:
-            path = os.getcwd()
-
-        folder = os.path.join(path, self.remove_suffixes(self.step_filename))
-        if not os.path.exists(folder):
-            print('Creating folder...')
-            os.makedirs(folder)
-
-        ''' Generate and save STEP and image files '''
-        for k,v in shapes.items():
-            step_file = os.path.join(folder, v + '.STEP')
-            if os.path.isfile(step_file):
-                print('Part model already exists; not saving')
-            else:
-                print('Saving STEP file for part: ', v)
-                DataExchange.write_step_file(k, step_file)
-
-            img_file = os.path.join(folder, v + '.jpg')
-            if os.path.isfile(img_file):
-                print('Part image file already exists; not saving')
-            else:
-                print('Saving image for part: ', v)
-                # self.save_image(node, img_file)
-                self.quick_render(k, img_file = img_file)
-
-
-
-    ''' HR 24/03/21
-        To load pre-calculated sim scores from file
-        and add graphlet sim scores to Excel (not present in old method)
-        BB, ML and GR scores all in common semi-matrix format '''
-
-    ''' Save all constituent parts in STEP file to individual STEP files
-        "path" is for saving everything
-        "model_folder" is path to STEP models for similarity scores '''
-    def sims_to_excel(self, path = None, model_folder = None, default_value = -1):
-
-        if not path:
-            path = os.getcwd()
-
-        ''' Create folder for everything if not already present '''
-        folder = os.path.join(path, self.remove_suffixes(self.step_filename))
-        # path = os.path.join(path, self.step_filename)
-        print('Folder to save to: ', folder)
-        if not os.path.exists(folder):
-            print('Creating folder...')
-            os.makedirs(folder)
-        else:
-            print('Folder already exists...')
-
-        if not model_folder:
-            model_folder = folder
-
-
-
-        ''' Get all unique parts by node ID to avoid duplication '''
-        leaves = self.leaves
-        ''' HR 25/05/21 "uniques" here is not adequate since retiring step_dict
-            in favour of node-stored shapes; must find:
-            (1) all products + shape (assume common)
-            (2) each non-product shape (excluding sub-shapes);
-                    for the latter, naming is already done ("screen_name")
-                    so just grab first example of each shape
-                    then keep running list of (raw) shapes to avoid duplication '''
-        uniques = {v:k for k,v in self.step_dict.items() if k in leaves}
-        uniques_sorted = sorted(uniques)
-        print('Got list of unique/distinct parts')
-        print('Number: ', len(uniques))
-
-
-
-        ''' Initialise Excel file for dumping data '''
-        bb_data = {}
-        ml_data = {}
-        gr_data = {}
-
-        data_file = os.path.join(folder, 'data_all.xlsx')
-        print('Full data file path: ', data_file)
-        workbook = xlsxwriter.Workbook(data_file)
-
-
-
-        ''' Get pre-calculated sim scores from file '''
-        try:
-            bb_dict = fileutils.load_from_txt(os.path.join(model_folder, 'scores_bb.txt'))
-        except:
-            bb_dict = {}
-
-        try:
-            ml_dict = fileutils.load_from_txt(os.path.join(model_folder, 'scores.txt'))
-        except:
-            ml_dict = {}
-
-        try:
-            gr_dict = fileutils.load_from_txt(os.path.join(model_folder, 'scores_graphlet.txt'))
-        except:
-            gr_dict = {}
-
-        print(bb_dict, ml_dict, gr_dict)
-
-
-
-        '''
-        Meta sheet and headers for all other sheets
-        '''
-
-        ''' Meta sheet '''
-        meta_sheet = workbook.add_worksheet('Information')
-        meta_fields = ['STEP line ref', 'Part name/label']
-        for i,el in enumerate(meta_fields):
-            meta_sheet.write(0, i, el)
-        for i,el in enumerate(uniques_sorted):
-            name = self.prod_dict[el]
-            meta_sheet.write(i+1, 0, el)
-            meta_sheet.write(i+1, 1, name)
-
-        ''' Bounding box/aspect ratio (BB) sim scores sheet '''
-        bb_fields = uniques_sorted
-        bb_sheet = workbook.add_worksheet('BB sim score data')
-        for i,el in enumerate(bb_fields):
-            bb_sheet.write(0, i+1, el)
-            bb_sheet.write(i+1, 0, el)
-
-        ''' Machine learning (ML) sim scores sheet '''
-        ml_fields = uniques_sorted
-        ml_sheet = workbook.add_worksheet('ML sim score data')
-        for i,el in enumerate(ml_fields):
-            ml_sheet.write(0, i+1, el)
-            ml_sheet.write(i+1, 0, el)
-
-        ''' Graphlet-based (GR) sim scores sheet '''
-        gr_fields = uniques_sorted
-        gr_sheet = workbook.add_worksheet('GR sim score data')
-        for i,el in enumerate(gr_fields):
-            gr_sheet.write(0, i+1, el)
-            gr_sheet.write(i+1, 0, el)
-
-
-
-        for prod_ref in uniques_sorted:
-
-            name = self.prod_dict[prod_ref]
-            node = uniques[prod_ref]
-
-            '''
-            Save STEP file for part
-            '''
-            step_path = os.path.join(folder, name + '.STEP')
-
-            ''' Skip if STEP file already exists'''
-            if os.path.isfile(step_path):
-                print('Part model already exists; not saving')
-            else:
-                print('Saving STEP file for part: ', name)
-                print(step_path)
-                ''' HR 25/05/21 Replaced OCC_dict use with shape from node dict '''
-                # shape = self.OCC_dict[node]
-                shape = self.nodes[node]['shape_loc'][0]
-                DataExchange.write_step_file(shape, step_path)
-
-            '''
-            Save rendered image of part
-            '''
-            img_path = os.path.join(folder, name + '.jpg')
-
-            ''' Skip if image file already exists '''
-            if os.path.isfile(img_path):
-                print('Part image file already exists; not saving')
-            else:
-                print('Saving image for part: ', name)
-                print(img_path)
-                ''' HR 25/05/21 "save_image" obsolete;
-                    must replace with node dict-based shape retrieval '''
-                # self.save_image(node, img_path, default_colour = True)
-
-
-
-        ''' Load sim scores and dump to Excel file '''
-        y = 0
-        _done = []
-        '''
-        Get similarity score data
-        '''
-        for ref1 in uniques_sorted:
-
-            name1 = self.prod_dict[ref1] + '.STEP'
-            bb_data[ref1] = []
-            ml_data[ref1] = []
-            gr_data[ref1] = []
-
-            for ref2 in uniques_sorted:
-                if ref2 in _done:
-                    print('Skipping...')
-                    continue
-
-                name2 = self.prod_dict[ref2] + '.STEP'
-
-                if (name1,name2) in bb_dict:
-                    bb_score = bb_dict[(name1,name2)]
-                    print('Found')
-                elif (name2,name1) in bb_dict:
-                    bb_score = bb_dict[(name2,name1)]
-                    print('Found')
-                else:
-                    bb_score = default_value
-                    print('Not found: ', (name1,name2))
-
-                if (name1,name2) in ml_dict:
-                    ml_score = ml_dict[(name1,name2)]
-                    print('Found')
-                elif (name2,name1) in ml_dict:
-                    ml_score = ml_dict[(name2,name1)]
-                    print('Found')
-                else:
-                    ml_score = default_value
-                    print('Not found: ', (name1,name2))
-
-                if (name1,name2) in gr_dict:
-                    gr_score = gr_dict[(name1,name2)]
-                    print('Found')
-                elif (name2,name1) in gr_dict:
-                    gr_score = gr_dict[(name2,name1)]
-                    print('Found')
-                else:
-                    gr_score = default_value
-                    print('Not found: ', (name1,name2))
-
-                bb_data[ref1].append(bb_score)
-                ml_data[ref1].append(ml_score)
-                gr_data[ref1].append(gr_score)
-
-            '''
-            Dump all scores to Excel file
-            offsetting by number of skipped entries to give triangular matrix
-            '''
-            for i,el in enumerate(bb_data[ref1]):
-                bb_sheet.write(y+1, i+y+1, el)
-                ml_el = ml_data[ref1][i]
-                ml_sheet.write(y+1, i+y+1, ml_el)
-                gr_el = gr_data[ref1][i]
-                gr_sheet.write(y+1, i+y+1, gr_el)
-
-            _done.append(ref1)
-            print(_done)
-
-            y += 1
-
-
-
-        ''' Must close workbook! '''
-        workbook.close()
-
-
-
     ''' Remove all single-child sub-assemblies as not compatible with lattice '''
     def remove_redundants(self, _tree = None):
 
@@ -1820,7 +2186,6 @@ class StepParse(nx.DiGraph):
 
 
     def get_parent(self, node):
-
         ''' Get parent of node; return None if parent not present '''
         parent = [el for el in self.predecessors(node)]
         if parent:
@@ -1831,7 +2196,6 @@ class StepParse(nx.DiGraph):
 
 
     def get_child(self, node):
-
         ''' Get (single) child of node; return None if parent not present
             Best used only when removing redundant (i.e. single-child) subassemblies '''
         child = [el for el in self.successors(node)]
@@ -1844,7 +2208,6 @@ class StepParse(nx.DiGraph):
 
     @property
     def leaves(self):
-
         ''' Get leaf nodes '''
         leaves = {el for el in self.nodes if self.out_degree(el) == 0}
         return leaves
@@ -1852,7 +2215,6 @@ class StepParse(nx.DiGraph):
 
 
     def node_depth(self, node):
-
         ''' Get depth of node(s) from root '''
         root = self.get_root(node)
         depth = nx.shortest_path_length(self, root, node)
@@ -1861,7 +2223,6 @@ class StepParse(nx.DiGraph):
 
 
     def move_node(self, node, new_parent):
-
         old_parent = self.get_parent(node)
         self.remove_edge(old_parent, node)
         self.add_edge(new_parent, node)
@@ -2162,593 +2523,130 @@ class StepParse(nx.DiGraph):
 
 
 
-    @classmethod
-    def similarity(self, str1, str2):
+    '''
+    SPLIT AND RENDER METHODS HERE
+    '''
+
+
+
+    ''' Image renderer (copied from StrEmbed) '''
+    def quick_render(self, shape, colour = None, img_file = None):
+
+        self.renderer.EraseAll()
+
+        if colour:
+            ''' Render in specified colour... '''
+            c = colour
+            self.renderer.DisplayShape(shape, color = Quantity_Color(c.Red(),
+                                                                      c.Green(),
+                                                                      c.Blue(),
+                                                                      Quantity_TOC_RGB))
+        else:
+            ''' ...or in default colour (for better reference images), i.e. orange '''
+            self.renderer.DisplayShape(shape)
+
+        try:
+            # print('Fitting and dumping image ', img_name)
+            ''' Create directory if it doesn't already exist '''
+            img_path = os.path.split(img_file)[0]
+            if not os.path.isdir(img_path):
+                os.mkdir(img_path)
+
+            self.renderer.View.FitAll()
+            self.renderer.View.ZFitAll()
+            self.renderer.View.Dump(img_file)
+            ''' Check if rendered and dumped, i.e. if image file exists '''
+            if os.path.exists(img_file):
+                # print('Image saved to ', img_file)
+                image_saved_ok = True
+            else:
+                print('Could not save image')
+                image_saved_ok = False
+
+        except Exception as e:
+            print('Could not dump image to file; exception follows')
+            print(e)
+            image_saved_ok = False
+
+        return image_saved_ok
+
+
+
+    ''' HR June 21 Updated to allow only products to be dumped '''
+    def split_and_render(self, path = None, products_only = False, subshapes = False):
+
+        # for node in self.nodes:
+        #     print(node, self.nodes[node]['screen_name'])
+
+        ''' Collect nodes to be checked, remove unwanted nodes (non-products, subshapes) '''
+        nodes = self.nodes
+        _to_remove = []
+        if products_only:
+            _to_remove.extend([el for el in nodes if not self.nodes[el]['is_product']])
+        if not subshapes:
+            _to_remove.extend([el for el in nodes if self.nodes[el]['is_subshape']])
+        if _to_remove:
+            for el in _to_remove:
+                nodes.remove(el)
+
+        ''' Collect unique shapes (i.e. avoid duplication) with names '''
+        shapes = {}
+
+        for node in nodes:
+            d = self.nodes[node]
+
+            ''' Skip if no shape '''
+            if not d['shape_raw'][0]:
+                continue
+            shape = d['shape_raw'][0]
+
+            ''' Skip rest if shape already grabbed or is sub-shape '''
+            if (shape in shapes):
+                # print('Duplicate shape found')
+                continue
+            # if not subshapes and d['is_subshape']:
+            #     # print('Sub-shape found; ignoring')
+            #     continue
+
+            ''' Else go through naming logic and add to shape map
+                1. If product, get product name, as maps to shape,
+                2. Otherwise get screen name '''
+            if d['is_product']:
+                name = d['occ_name']
+            else:
+                name = d['screen_name']
+            shapes[shape] = name
+
+
+
+        ''' Abort if no shapes '''
+        if not shapes:
+            print('No shapes found; aborting...')
+            return
+
 
-        if type(str1) != str:
-            str1 = str(str1)
-        if type(str2) != str:
-            str2 = str(str2)
-
-        _lev_dist = nltk.edit_distance(str1, str2)
-        _sim = 1 - _lev_dist/max(len(str1), len(str2))
-
-        return _lev_dist, _sim
-
-
-
-    @classmethod
-    def node_sim(self, a1, a2, nodes1 = None, nodes2 = None, weight = [1,0,1,0,0], C1 = 0, C2 = 0):
-        ''' Weights apply to similarity of following metrics (by index):
-            0. Depth of nodes in tree (i.e. from root)
-            1. Number of siblings
-            2. Number of children
-            3. Name of parent '''
-
-        if not nodes1:
-            nodes1 = a1.nodes
-        if not nodes2:
-            nodes2 = a2.nodes
-
-        # if type(nodes1) is not list:
-        #     nodes1 = [nodes1]
-        # if type(nodes2) is not list:
-        #     nodes2 = [nodes2]
-
-        _r1 = a1.get_root()
-        _r2 = a2.get_root()
-
-        _sim_label = {}
-        _sim_depth = {}
-        _sim_sibs = {}
-        _sim_children = {}
-        _sim_parent = {}
-        _sim = {}
-
-        for n1 in nodes1:
-            _sim_label[n1] = {}
-            _sim_depth[n1] = {}
-            _sim_sibs[n1] = {}
-            _sim_children[n1] = {}
-            _sim_parent[n1] = {}
-            _sim[n1] = {}
-
-            for n2 in nodes2:
-
-                ''' Get node label similarity '''
-                _sim_label[n1][n2] = self.similarity(a1.nodes[n1]['label'], a2.nodes[n2]['label'])[1]
-
-
-
-                ''' Get tree-depth similarity '''
-                _d1 = nx.shortest_path_length(a1, _r1, n1)
-                _d2 = nx.shortest_path_length(a2, _r2, n2)
-                if (_d1 == 0) and (_d2 == 0):
-                    c = C1
-                elif (_d1 == 0) != (_d2 == 0):
-                    c = C2
-                else:
-                    c = min(_d1, _d2)/max(_d1, _d2)
-                _sim_depth[n1][n2] = c
-
-
-
-                ''' Get parents, where None is default if no parent... '''
-                _p1 = next(a1.predecessors(n1), None)
-                _p2 = next(a2.predecessors(n2), None)
-                ''' ...then get parent label similarity, if both parents exist '''
-                if (_p1 == None) and (_p2 == None):
-                    c = C1
-                elif (_p1 == None) != (_p2 == None):
-                    c = C2
-                else:
-                   c = self.similarity(a1.nodes[_p1]['label'], a2.nodes[_p2]['label'])[1]
-                _sim_parent[n1][n2] = c
-
-
-
-                ''' Get number of siblings... '''
-                try:
-                    _ns1 = len([el for el in a1.successors(_p1)]) - 1
-                    _ns2 = len([el for el in a2.successors(_p2)]) - 1
-                except:
-                    _ns1 = 0
-                    _ns2 = 0
-                ''' ...then get similarity '''
-                if (_ns1 == 0) and (_ns2 == 0):
-                    c = C1
-                elif (_ns1 == 0) != (_ns2 == 0):
-                    c = C2
-                else:
-                    c = min(_ns1, _ns2)/max(_ns1, _ns2)
-                _sim_sibs[n1][n2] = c
-
-
-
-                ''' Get number of children... '''
-                _nc1 = len([el for el in a1.successors(n1)])
-                _nc2 = len([el for el in a2.successors(n2)])
-                ''' ...then get similarity '''
-                if (_nc1 == 0) and (_nc2 == 0):
-                    c = C1
-                elif (_nc1 == 0) != (_nc2 == 0):
-                    c = C2
-                else:
-                    c = min(_nc1, _nc2)/max(_nc1, _nc2)
-                _sim_children[n1][n2] = c
-
-
-                _norm = sum(weight)
-                ''' Get total (aggregate) similarity '''
-                _sim[n1][n2] = (_sim_label[n1][n2]*weight[0] \
-                        + _sim_depth[n1][n2]*weight[1] \
-                        + _sim_parent[n1][n2]*weight[2] \
-                        + _sim_sibs[n1][n2]*weight[3] \
-                        + _sim_children[n1][n2]*weight[4])/_norm
-
-        return _sim, _sim_label, _sim_depth, _sim_parent, _sim_sibs, _sim_children
-
-
-
-    @classmethod
-    def remove_suffixes(self, _str):
-        suffixes = ('.stp', '.step', '.STP', '.STEP')
-        while _str.endswith(suffixes):
-            _str = os.path.splitext(_str)[0]
-        return _str
-
-
-
-    ''' Get all mappings by exact matching of field '''
-    @classmethod
-    def map_exact(self, a1, a2, nodes1 = None, nodes2 = None, _field = 'label'):
-
-        if (not nodes1) and (not nodes2):
-            nodes1 = a1.nodes
-            nodes2 = a2.nodes
-        elif (not nodes1) != (not nodes2):
-            return None
-
-        _map = {}
-
-        _values = set([a1.nodes[el][_field] for el in a1.nodes])
-        _field_dict = {}
-
-        for el in _values:
-            _n1 = [_el for _el in a1.nodes if a1.nodes[_el][_field] == el]
-            _n2 = [_el for _el in a2.nodes if a2.nodes[_el][_field] == el]
-            if _n1 and _n2:
-                if len(_n1) == 1 and len(_n2) == 1:
-                    ''' If single-value mapping, then map... '''
-                    if _n1[0] not in _map:
-                        _map[_n1[0]] = _n2[0]
-                else:
-                    ''' ...else create dupe dict entry '''
-                    _field_dict[tuple(_n1)] = tuple(_n2)
-
-        return _field_dict, _map
-
-
-
-    ''' Get mappings by max value
-        If "singles_only" is true, only map for single-occurrence max sim values
-        Else map anyway, which means first node2 found with max sim value is mapped '''
-    @classmethod
-    def get_by_max(self, _sim, singles_only = True):
-
-        _map = {}
-
-        nodes1 = _sim.keys()
-
-        ''' Loop over node1 items, which are contained in key of "_sim" '''
-        for node1 in nodes1:
-            _simdict = _sim[node1]
-            ''' Remove already-mapped entries '''
-            for _done2 in _map.values():
-                _simdict.pop(_done2, None)
-            ''' Short-circuit if _simdict empty
-                This will happen when fewer n1 than n2 '''
-            if not _simdict:
-                return _map
-
-            _max = max([el for el in _simdict.values()])
-            _occ = sum(value == _max for value in _simdict.values())
-
-            ''' Get valid (i.e. not already mapped) k-v pairs in simdict '''
-            if (singles_only and _occ == 1) or not singles_only:
-                node2 = [_k for _k,_v in _simdict.items() if _v == _max][0]
-                _map[node1] = node2
-
-        return _map
-
-
-
-    @classmethod
-    def remap_entries(self, k, v, _dupe, _sim):
-
-        ''' Start building new dupe map elements... '''
-        _toremove1 = [el for el in _dupe]
-        _toremove2 = [el for el in _dupe.values()]
-
-        _n1 = tuple([el for el in k if el not in _toremove1])
-        _n2 = tuple([el for el in v if el not in _toremove2])
-
-        ''' ...and new total sim dict entry '''
-        _newv = {_k:_v for _k,_v in _sim.items() if _k in _n1}
-        _klist = list(_newv)
-        for el in _klist:
-            for _el in _toremove2:
-                if _el in _newv[el]:
-                    _newv[el].pop(_el, None)
-
-        _dupenew = {}
-        _simnew = {}
-        ''' Check that n1 and n2 both have items in, otherwise would be redundant... '''
-        if (len(_n1) > 0) and (len(_n2) > 0):
-            ''' ...then actually create entries... '''
-            _dupenew[_n1] = _n2
-            _simnew[_n1] = _newv
-
-        return _dupenew, _simnew
-
-
-
-    ''' HR 24/11/20
-        reform_entries not working as intended when tested with torch assembly
-        and HHC's alternative assembly with four bulbs
-        Problem is matching nodes within multiplicity groupings '''
-    @classmethod
-    def reform_entries(self, nodes1, nodes2, _sim):
-
-        nodes1 = list(nodes1)
-        nodes2 = list(nodes2)
-
-        ''' HR 26/11/20 Workaround to avoid problems for node sets with differing sizes
-            Larger problems with this method remain, as described above '''
-        if len(nodes1) != len(nodes2):
-            return {tuple(nodes1):tuple(nodes2)}
-
-        _first = nodes1[0]
-        _firstdict = _sim[_first]
-        _firstvalueset = set(_firstdict.values())
-
-        if len(_firstvalueset) == 1:
-            return {tuple(nodes1):tuple(nodes2)}
-
-        _sims = list(_firstdict.values())
-
-        _newentries = {}
-
-        for el in _firstvalueset:
-
-            _i = [i for i,val in enumerate(_sims) if val == el]
-            _n1 = [nodes1[i] for i in _i]
-            _n2 = [nodes2[i] for i in _i]
-
-            ''' Reform grouping; no need to rebuild totals dict as not used after this '''
-            _newentries[tuple(_n1)] = tuple(_n2)
-
-        return _newentries
-
-
-
-    ''' Map same-sim-value grouping
-        (a) by same node IDs or
-        (b) in numerical order '''
-    @classmethod
-    def map_multi_grouping(self, k, v):
-
-        _toremove = []
-        _newmap = {}
-
-        _klist = sorted([el for el in k])
-        _vlist = sorted([el for el in v])
-
-        ''' First match any with the same IDs... '''
-        for el in _klist:
-            if el in _vlist:
-                _newmap[el] = el
-                _toremove.append(el)
-
-        for el in _toremove:
-            _klist.remove(el)
-            _vlist.remove(el)
-
-        ''' ...then match the remainder in numerical order
-            N.B. "zip" truncates to length of smaller list '''
-        if _klist and _vlist:
-            _remainder = dict(zip(_klist, _vlist))
-            for _k,_v in _remainder.items():
-                _newmap[_k] = _v
-
-        return _newmap
-
-
-
-    @classmethod
-    def map_nodes(self, a1, a2, **kwargs):
-
-        _mapped = {}
-
-
-
-        '''
-        1.  Easy part of mapping: exact 1:1 mappings
-            and get dupe map for any unmapped exact matches
-        '''
-        _dupemap, _newitems = StepParse.map_exact(a1,a2)
-        _mapped.update(_newitems)
-
-
-
-        ''' Then calculate similarity matrix for each duplicate group
-            This effectively allows matching by similarity components
-            other than (but also including) exact node-name matches,
-            e.g. parent node names (or whatever the user specifies
-            via "weight" values in "node_sim") '''
-
-        _sim = {}
-        for k,v in _dupemap.items():
-            _sim[k] = self.node_sim(a1, a2, k, v)
-
-
-
-        ''' Get total similarity (i.e. sum of all measures)
-            "_sim" contains each separately; [0] element is total value '''
-        _totals = {k:v[0] for k,v in _sim.items()}
-
-
-
-        '''
-        2.  Get all singular mappings within duplicate groupings,
-            i.e. occurrence of max value is one, and remove from grouping
-        '''
-
-        _tomap = {k:v for k,v in _dupemap.items()}
-        _totalscopy = {k:v for k,v in _totals.items()}
-
-        for k,v in _tomap.items():
-
-            ''' Get singular mappings and update global map '''
-            _newlymapped = self.get_by_max(_totals[k])
-
-            ''' Remove old/create new dict items if any mappings made above '''
-            if _newlymapped:
-
-                ''' Add new entries to master map '''
-                _mapped.update(_newlymapped)
-
-                ''' Get new entries with already-mapped items removed... '''
-                _newdupe, _newtotals = self.remap_entries(k, v, _newlymapped, _totalscopy[k])
-
-                ''' ...then update dicts with new entries '''
-                if _newdupe:
-                    _dupemap.update(_newdupe)
-                if _newtotals:
-                    _totals.update(_newtotals)
-
-                ''' Remove old entries with "pop";
-                    'None' default in "pop" avoids exception if item not found '''
-                _dupemap.pop(k, None)
-                _totals.pop(k, None)
-
-
-
-        for k,v in _totals.items():
-
-            ''' Reform sub-groupings within each duplicate grouping
-                "_valuelen" should be two or more for all entries now,
-                as all single-occurrence values removed above '''
-
-            _newentries = self.reform_entries(k, _dupemap[k], _totals[k])
-            _dupemap.pop(k, None)
-            _dupemap.update(_newentries)
-
-
-
-        '''
-        3.  Map remaining exact duplicate groupings, which all now have v = 1 due to reforming above
-        '''
-
-        _tomap = {k:v for k,v in _dupemap.items()}
-
-        for k,v in _tomap.items():
-
-            ''' Remove from map of duplicates '''
-            _dupemap.pop(k)
-
-            _newones = self.map_multi_grouping(k, v)
-            _mapped.update(_newones)
-
-
-
-        ''' Put together all unmapped items '''
-        _u1 = [el for el in a1.nodes if el not in _mapped]
-        _u2 = [el for el in a2.nodes if el not in _mapped.values()]
-
-
-
-        '''
-        4.  Now need to continue mapping all nodes without exact label matches
-        '''
-
-        ''' Get total similarity (i.e. sum of all measures), currently element [0] '''
-        if _u1 and _u2:
-            _sim_u = self.node_sim(a1, a2, _u1, _u2, weight = [1,0,1,0,0])[0]
-
-            ''' First job, as in previous sections: get any easy mappings where
-                max sim value appears once, and remove from dict '''
-            _newmap = self.get_by_max(_sim_u)
-            if _newmap:
-                _mapped.update(_newmap)
-
-                for node1 in _newmap:
-                    _u1.remove(node1)
-                for node2 in _newmap.values():
-                    _u2.remove(node2)
-
-                _dupenew, _simnew = self.remap_entries(_u1, _u2, _newmap, _sim_u)
-                _dupemap.update(_dupenew)
-
-
-                # ''' Next stage is to get sim groupings
-                #     i.e. where max sim value appears more than once '''
-                # _newentries = self.reform_entries(tuple(_u1), tuple(_u2), _simnew)
-                # print('New sim map by reforming: ', _newentries)
-
-
-
-        # return _mapped, (_u1, _u2), _sim, _dupemap, _totals, _tomap, _simnew
-        return _mapped, (_u1, _u2)
-
-
-
-    ''' ---------------
-    TREE RECONCILIATION
-    HR 3/6/20
-    Based on Networkx "optimal_edit_paths" method
-
-    a1 and a2 are assemblies 1 and 2
-    Call as "paths, cost = StepParse.Reconcile(a1, a2)"
-    ----------------'''
-
-    @classmethod
-    def Reconcile(self, a1, a2, lev_tol = 0.1):
-
-        ''' -------------------------------------------
-        STAGE 1: MAP NODES/EDGES B/T THE TWO ASSEMBLIES
-
-        Currently done simply via tags
-        More sophisticated metrics to be implemented in future
-
-        Method of assembly class (StepParse) to set item tags to their IDs
-        --------------------------------------------'''
-        a1.set_all_tags()
-        a2.set_all_tags()
-
-
-
-        def similarity(str1, str2):
-
-            _lev_dist  = nltk.edit_distance(str1, str2)
-            _sim = 1 - _lev_dist/max(len(str1), len(str2))
-
-            return _lev_dist, _sim
-
-
-
-        # def remove_special_chars(_str):
-
-        #     # Strip out special characters
-        #     _str = re.sub('[!@#$_]', '', _str)
-
-        #     return _str
-
-
-
-        ''' Comparing nodes directly gives equality simply if both are NX nodes...
-            ...i.e. same object type, but this isn't good enough...'
-            ...so equality in this context defined as having same tags '''
-        def return_eq(item1, item2):
-
-            _eq = False
-
-            tag1 = item1['tag']
-            tag2 = item2['tag']
-
-            ''' 1. Simple equality test based on tags
-                (which are just IDs copied to "tag" field)... '''
-            _eq = tag1 == tag2
-            if _eq:
-                print('Mapped ', tag1, 'to ', tag2)
-
-            # ''' 2. ...then do test based on parts contained by nodes... '''
-            # if tag1 and tag2 in (a1.nodes or a2.nodes) and not _eq:
-            #     try:
-            #         _eq = item1['parts'] == item2['parts']
-            #     except:
-            #         pass
-
-            # ''' 3. ...then do test based on Levenshtein distance b/t items, if leaves '''
-            # if not _eq and (tag1 and tag2 in (a1.leaves or a2.leaves)):
-
-            #     tag1_ = remove_special_chars(tag1)
-            #     tag2_ = remove_special_chars(tag2)
-
-            #     try:
-            #         dist = similarity(tag1_, tag2_)
-            #         _eq  = dist < lev_tol
-            #     except:
-            #         pass
-
-            # if _eq:
-            #     print('Nodes/edges mapped:     ', tag1, tag2)
-            # else:
-            #     pass
-
-            return _eq
-            # return item1 == item2
-
-
-
-
-        def MyReconcile(a1, a2, node_match = None, edge_match = None):
-
-            a1.set_all_tags()
-            a2.set_all_tags()
-
-            n1 = set(a1.nodes)
-            n2 = set(a2.nodes)
-            e1 = set(a1.edges)
-            e2 = set(a2.edges)
-
-            node_deletions = []
-            node_additions = []
-            edge_deletions = []
-            edge_additions = []
-
-            ''' Find additions and deletions by set difference (relative complement) '''
-            #
-            for _node in n1 - n2:
-                node_deletions.append((_node, None))
-            print('Node deletions: ', node_deletions)
-
-            for _node in n2 - n1:
-                node_additions.append((None, _node))
-            print('Node deletions: ', node_additions)
-
-            for _edge in e1 - e2:
-                edge_deletions.append((_edge, None))
-            print('Edge deletions: ', edge_deletions)
-
-            for _edge in e2 - e1:
-                edge_additions.append((None, _edge))
-            print('Edge additions: ', edge_additions)
-
-
-
-            paths = [list(set(node_deletions + node_additions)), list(set(edge_deletions + edge_additions))]
-
-            cost = len(node_deletions) + len(node_additions) + len(edge_deletions) + len(edge_additions)
-
-            return paths, cost
-
-
-        ''' -----------------------------------------------------
-        STAGE 2: FIND EDIT PATHS VIA NETWORKX AND GENERATE REPORT
-        ------------------------------------------------------'''
-
-        # paths, cost_nx = nx.optimal_edit_paths(a1, a2, node_match = return_eq, edge_match = return_eq)
-        # paths = paths[0]
-
-        paths, cost = MyReconcile(a1, a2, node_match = return_eq, edge_match = return_eq)
-
-        node_edits = [el for el in paths[0] if el[0] != el[1]]
-        edge_edits = [el for el in paths[1] if el[0] != el[1]]
-        cost_from_edits = len(node_edits) + len(edge_edits)
-
-        print('Node edits: {}\nEdge edits: {}\nTotal cost (Networkx): {}\nTotal cost (no. of edits): {}'.format(
-            node_edits, edge_edits, cost, cost_from_edits))
-
-        return paths, cost, cost_from_edits, node_edits, edge_edits
-
+        ''' Get cwd as path if none given '''
+        if not path:
+            path = os.getcwd()
+
+        ''' Create folder '''
+        folder = os.path.join(path, remove_suffixes(self.step_filename))
+        if not os.path.exists(folder):
+            print('Creating folder...')
+            os.makedirs(folder)
+
+        ''' DO DUMP: Generate and save STEP and image files '''
+        for k,v in shapes.items():
+            step_file = os.path.join(folder, v + '.STEP')
+            if os.path.isfile(step_file):
+                print('Part model already exists; not saving')
+            else:
+                print('Saving STEP file for part: ', v)
+                DataExchange.write_step_file(k, step_file)
+
+            img_file = os.path.join(folder, v + '.jpg')
+            if os.path.isfile(img_file):
+                print('Part image file already exists; not saving')
+            else:
+                print('Saving image for part: ', v)
+                self.quick_render(k, img_file = img_file)

@@ -40,8 +40,6 @@ Version 5.5
 ''' HR 02/12/20
 Version 5.6 '''
 
-import sys
-
 # WX stuff
 import wx
 # WX customtreectrl for parts list
@@ -69,11 +67,7 @@ import re
 # OS operations for exception-free file checking
 import os.path
 
-import shutil
-# import nltk
-
-# For timings
-import time
+# import shutil
 
 # Import networkx for plotting lattice
 import networkx as nx
@@ -99,9 +93,6 @@ from OCC.Display import OCCViewer
 from OCC.Display import wxDisplay
 from OCC.Core.Quantity import (Quantity_Color, Quantity_NOC_WHITE, Quantity_TOC_RGB)
 from OCC.Core.AIS import AIS_Shaded, AIS_WireFrame
-
-''' XLSX for export '''
-import xlsxwriter
 
 
 
@@ -418,14 +409,14 @@ class MainWindow(wx.Frame):
         self.no_image_part = images.no_image_part_png.GetBitmap()
         self.no_image      = images.no_image_png.GetBitmap()
 
-        self.im_folder = 'Temp'
-        self.im_path = os.path.join(os.getcwd(), self.im_folder)
-        if not os.path.exists(self.im_path):
-            os.mkdir(self.im_path)
-            print('Created temporary image folder at ', self.im_path)
+        # self.im_folder = 'Temp'
+        # self.im_path = os.path.join(os.getcwd(), self.im_folder)
+        # if not os.path.exists(self.im_path):
+        #     os.mkdir(self.im_path)
+        #     print('Created temporary image folder at ', self.im_path)
 
-        ''' Off-screen renderer for producing static images for toggle buttons '''
-        self.renderer = ShapeRenderer()
+        # ''' Off-screen renderer for producing static images for toggle buttons '''
+        # self.renderer = ShapeRenderer()
 
         self.tight = 0.9
         self._border = 1
@@ -678,82 +669,6 @@ class MainWindow(wx.Frame):
 
 
 
-    ''' HR 25/02/21
-        Basic XLSX output for whole lattice (i.e. all assemblies) '''
-    def xlsx_write(self, _ids = None):
-
-        def get_header(_id, page):
-            mgr = self._assembly_manager._mgr
-            header = []
-            header.append(mgr[_id].assembly_id)
-            header.append(page.name)
-            header.append(page.filename_fullpath)
-            return header
-
-        def get_output_data(_id, node):
-            ass = self._assembly_manager._mgr[_id]
-            data = []
-            data.append(node)
-            try:
-                data.append(ass.nodes[node]['label'])
-            except:
-                data.append('')
-            try:
-                data.append(ass.nodes[node]['text'])
-            except:
-                data.append('')
-            try:
-                data.append(ass.get_parent(node))
-            except:
-                data.append('None (root)')
-            return data
-
-        header_fields = ['Assembly ID', 'Assembly name', 'STP/STEP file']
-        y_offset = len(header_fields) + 2
-
-        fields = ['Node ID', 'Label', 'Text', 'Parent ID', ]
-
-        save_file = 'torch_project.xlsx'
-
-        excel_file = os.getcwd() + '\\' + save_file
-        workbook = xlsxwriter.Workbook(excel_file)
-
-        '''Export all assemblies if none specified '''
-        if not _ids:
-            _ids = [el for el in self._assembly_manager._mgr]
-
-        ''' Create worksheet for each assembly to be exported '''
-        sheet_dict = {}
-        for _id in _ids:
-            sheet_dict[_id] = workbook.add_worksheet()
-            page = [k for k,v in self._notebook_manager.items() if v == _id][0]
-
-            ''' Write main header... '''
-            header_data = get_header(_id, page)
-            for i,el in enumerate(header_fields):
-                sheet_dict[_id].write(i, 0, el)
-                sheet_dict[_id].write(i, 1, header_data[i])
-
-            ''' ...and node fields header '''
-            for i,el in enumerate(fields):
-                sheet_dict[_id].write(y_offset-1,i,el)
-
-            ''' Get all nodes still present in CTC '''
-            nodes = list(page.ctc_dict)
-
-            counter = 0
-            for node in nodes:
-                data = get_output_data(_id, node)
-                for i,el in enumerate(data):
-                    x = i
-                    y = counter + y_offset
-                    sheet_dict[_id].write(y, x, data[i])
-                counter += 1
-
-        workbook.close()
-
-
-
     def get_selected_assemblies(self):
 
         self.AddText('Trying to get selected assemblies...')
@@ -803,7 +718,8 @@ class MainWindow(wx.Frame):
         # print('Mapped nodes: ', _mapped)
         # print('Unmapped nodes: ', _unmapped)
 
-        self.xlsx_write()
+        ''' HR June 21 xlsx_write removed here -> fileutils as want to consolidate in future '''
+        # self.xlsx_write()
 
 
 
@@ -836,7 +752,7 @@ class MainWindow(wx.Frame):
 
         # return _map
         pass
-f
+
 
 
     def OnRecon(self, event = None):
@@ -852,7 +768,9 @@ f
         a1 = _assemblies[0]
         a2 = _assemblies[1]
 
-        paths, cost, cost_from_edits, node_edits, edge_edits = StepParse.Reconcile(a1, a2)
+        ''' HR June 21 "Reconcile" moved from StepParse class method to AssemblyManager '''
+        # paths, cost, cost_from_edits, node_edits, edge_edits = StepParse.Reconcile(a1, a2)
+        paths, cost, cost_from_edits, node_edits, edge_edits = self._assembly_manager.Reconcile(a1, a2)
 
         _textout = 'Node edits: {}\nEdge edits: {}\nTotal cost (Networkx): {}\nTotal cost (no. of edits): {}'.format(
             node_edits, edge_edits, cost, cost_from_edits)
@@ -863,7 +781,7 @@ f
 
 
     def OnSuggestionsButton(self, event):
-        self.AddText('Generating suggestions for new assembly based on selected them (priorities)...')
+        self.AddText('Generating suggestions for new assembly based on selected theme (priorities)...')
 
 
 
@@ -1095,7 +1013,7 @@ f
 
 
 
-    def DisplayPartsList(self):
+    def DisplayPartsList(self, display_field = 'screen_name'):
 
         print('Running DisplayPartsList')
         ''' Check if file loaded previously '''
@@ -1107,10 +1025,8 @@ f
         ''' Create root node... '''
         root_id = self.assembly.get_root()
         print('Found root:', root_id)
-        # text = self.assembly.nodes[root_id]['text']
-        # label = self.assembly.nodes[root_id]['label']
-        text = self.assembly.nodes[root_id]['screen_name']
-        label = self.assembly.nodes[root_id]['screen_name']
+        text = self.assembly.nodes[root_id][display_field]
+        label = self.assembly.nodes[root_id][display_field]
 
         ctc_root_item = self._page.partTree_ctc.AddRoot(text = text, ct_type = 1, data = {'id_': root_id, 'sort_id': root_id, 'label': label})
 
@@ -1134,13 +1050,11 @@ f
 
                     ''' Text and label will differ if changed previously by user in parts view '''
                     try:
-                        # label = self.assembly.nodes[node]['label']
-                        label = self.assembly.nodes[node]['screen_name']
+                        label = self.assembly.nodes[node][display_field]
                     except:
                         label = self.assembly.default_label_part
                     try:
-                        # text = self.assembly.nodes[node]['text']
-                        text = self.assembly.nodes[node]['screen_name']
+                        text = self.assembly.nodes[node][display_field]
                     except:
                         text = self.assembly.default_label_part
 
@@ -1290,8 +1204,8 @@ f
 
         _id = self.assembly.assembly_id
 
+        print('Trying to clear lattice axes...')
         try:
-            print('Trying to clear lattice axes...')
             self.latt_axes.clear()
             print('Done')
         except Exception as e:
@@ -1330,7 +1244,6 @@ f
         ''' Update lattice panel layout '''
         # self.latt_panel.Layout()
         print('Done layout')
-
 
 
 
@@ -1430,18 +1343,20 @@ f
     def selected_items(self, items):
         if type(items) is list:
             self.selected_items = items
+        elif type(items) is int:
+            self.selected_items[items]
         else:
             print('Selected items not reset: items must be list')
 
 
 
-    def get_image_name(self, node, suffix = '.jpg'):
-        ''' Image file type and "suffix" here (jpg) is dictated by python-occ "Dump" method
-            which can't be changed without delving into C++ '''
-        full_name = os.path.join(self.im_path, str(self.assembly.assembly_id), str(node)) + suffix
-        print('Full path of image to fetch:\n', full_name)
+    # def get_image_name(self, node, suffix = '.jpg'):
+    #     ''' Image file type and "suffix" here (jpg) is dictated by python-occ "Dump" method
+    #         which can't be changed without delving into C++ '''
+    #     full_name = os.path.join(self.im_path, str(self.assembly.assembly_id), str(node)) + suffix
+    #     print('Full path of image to fetch:\n', full_name)
 
-        return full_name
+    #     return full_name
 
 
 
@@ -1939,7 +1854,6 @@ f
 
 
 
-
     def sort_check(self):
 
         ''' Check only one non-part item selected '''
@@ -2168,9 +2082,11 @@ f
 
         ''' Show program info '''
         abt_text = """StrEmbed-5-6: A user interface for manipulation of design configurations\n
-            Copyright (C) 2019-2020 Hugh Patrick Rice\n
+            Copyright (C) 2019-2021 Hugh Patrick Rice\n
             This research is supported by the UK Engineering and Physical Sciences
             Research Council (EPSRC) under grant number EP/S016406/1.\n
+            All code can be found here: https://github.com/paddy-r/StrEmbed-5-6,
+            and bugs should be reported there or directly to the author at h.p.rice@leeds.ac.uk\n
             This program is free software: you can redistribute it and/or modify
             it under the terms of the GNU General Public License as published by
             the Free Software Foundation, either version 3 of the License, or
@@ -2344,19 +2260,19 @@ f
 
 
 
-    def remove_saved_images(self):
-        ''' Remove all saved images '''
-        print('Trying to remove saved images...')
-        try:
-            shutil.rmtree(self.im_path)
-            print('Done')
-        except:
-            print('Could not delete saved images: none may be present')
+    # def remove_saved_images(self):
+    #     ''' Remove all saved images '''
+    #     print('Trying to remove saved images...')
+    #     try:
+    #         shutil.rmtree(self.im_path)
+    #         print('Done')
+    #     except:
+    #         print('Could not delete saved images: none may be present')
 
 
 
     def OnExit(self, event):
-        self.remove_saved_images()
+        # self.remove_saved_images()
         event.Skip()
 
 
