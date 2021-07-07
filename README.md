@@ -41,7 +41,7 @@ There are several ways to run ```StrEmbed-5-6```, which are described below and 
 1. ```StrEmbed_5_6``` (main script)
 2. ```step_parse_5_6``` (contains class for for file and graph operations)
 
-The above incorporate code (specifically for the 3D viewer) from ```Python-OCC``` [here](https://github.com/tpaviot/pythonocc-core). ```StrEmbed-5-6``` has a large number of dependencies that must also be installed in your environment. Contact the developers of those packages if you encounter problems.
+The above incorporate code (specifically for the 3D viewer) from ```Python-OCC``` [here](https://github.com/tpaviot/pythonocc-core). ```StrEmbed-5-6``` has a large number of dependencies that must also be installed in your environment. Contact the developers of those packages if you encounter problems. The script ```env_setup.txt``` can be run as a batch file in an Anaconda shell to create an environment in which ```StrEmbed-5-6``` will run.
 
 (2) Run as a standalone executable. This does not require you to have Python or any IDE installed. Simply double-click on one of the files ending with  ```.exe``` and the user interface will appear. Please note that two executables are provided, with and without console output for debugging purposes. Please make a record of the output if you encounter problems and wish to contact the developers for help.
 
