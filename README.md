@@ -45,7 +45,7 @@ The above incorporate code (specifically for the 3D viewer) from ```Python-OCC``
 
 (2) Run as a standalone executable. This does not require you to have Python or any IDE installed. Simply double-click on one of the files ending with  ```.exe``` and the user interface will appear. Please note that two executables are provided, with and without console output for debugging purposes. Please make a record of the output if you encounter problems and wish to contact the developers for help.
 
-Several STEP file examples are provided. The "Images" folder contains images necessary for building the application but not for running it. Temporary images corresponding to the parts in a loaded STEP file are also stored in a folder called "Temp" that is created and destroyed at runtime and which the user may delete at any time.
+Several STEP file examples are provided. The "Images" folder contains images necessary for building the application but not for running it.
 
 ```StrEmbed-5-6``` was developed in Spyder, an IDE for Python that is packaged with the Anaconda distribution, which can be downloaded [here](https://www.anaconda.com/distribution/).
 
