@@ -1063,13 +1063,12 @@ class MainWindow(wx.Frame):
                     self._page.ctc_dict[node]         = ctc_item
                     self._page.ctc_dict_inv[ctc_item] = node
 
-        # self._page.partTree_ctc.ExpandAll()
+        self._page.partTree_ctc.ExpandAll()
 
         ''' Sort all tree items '''
         self._page.partTree_ctc.SortAllChildren(self._page.partTree_ctc.GetRootItem())
 
         print('Finished DisplayPartsList')
-
 
 
 
@@ -1268,8 +1267,8 @@ class MainWindow(wx.Frame):
         POPUP MENU (WITH BINDINGS) UPON RIGHT-CLICK IN PARTS VIEW
         '''
         menu = wx.Menu()
-        menu_item = menu.Append(wx.ID_ANY, 'Change item and get all affected', 'Change item property and find affected parts in all assemblies')
-        self.Bind(wx.EVT_MENU, self.OnChangeItemProperty, menu_item)
+        # menu_item = menu.Append(wx.ID_ANY, 'Change item and get all affected', 'Change item property and find affected parts in all assemblies')
+        # self.Bind(wx.EVT_MENU, self.OnChangeItemProperty, menu_item)
 
 
         '''
@@ -1316,12 +1315,12 @@ class MainWindow(wx.Frame):
 
 
 
-    def OnChangeItemProperty(self, event):
-        _selected = self.selected_items
-        for item in _selected:
-            tree_item = self._page.ctc_dict[item]
-            self._page.partTree_ctc.SetItemTextColour(tree_item, self._highlight_colour)
-        print('Changing item property and finding affected items...')
+    # def OnChangeItemProperty(self, event):
+    #     _selected = self.selected_items
+    #     for item in _selected:
+    #         tree_item = self._page.ctc_dict[item]
+    #         self._page.partTree_ctc.SetItemTextColour(tree_item, self._highlight_colour)
+    #     print('Changing item property and finding affected items...')
 
 
 

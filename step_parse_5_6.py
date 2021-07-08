@@ -690,10 +690,10 @@ class AssemblyManager():
         ''' Get node map (n1:n2) and lists of unmapped nodes in a1 and a2 '''
         _map = results[0]
         _u1, _u2 = results[1]
-        
+
         ''' Show results '''
         print('Mapping results: ')
-        f = 'occ_name'
+        f = 'screen_name'
         for k,v in results[0].items():
             print('a1 node: ', _a1.nodes[k][f], 'a2 node: ', _a2.nodes[v][f])
 
@@ -1139,7 +1139,7 @@ class AssemblyManager():
                 ''' Get node label similarity '''
                 # print('n1, n2, field:')
                 # print(n1, n2, field)
-                
+
                 _sim_label[n1][n2] = self.similarity(a1.nodes[n1][field], a2.nodes[n2][field])[1]
 
 
@@ -1564,7 +1564,7 @@ class AssemblyManager():
     # ''' HR 25/02/21
     #     Basic XLSX output for whole lattice (i.e. all assemblies) '''
     # def xlsx_write(self, _ids = None):
-    
+
     #     def get_header(_id, page):
     #         mgr = self._assembly_manager._mgr
     #         header = []
@@ -1572,7 +1572,7 @@ class AssemblyManager():
     #         header.append(page.name)
     #         header.append(page.filename_fullpath)
     #         return header
-    
+
     #     def get_output_data(_id, node):
     #         ass = self._assembly_manager._mgr[_id]
     #         data = []
@@ -1590,40 +1590,40 @@ class AssemblyManager():
     #         except:
     #             data.append('None (root)')
     #         return data
-    
+
     #     header_fields = ['Assembly ID', 'Assembly name', 'STP/STEP file']
     #     y_offset = len(header_fields) + 2
-    
+
     #     fields = ['Node ID', 'Label', 'Text', 'Parent ID', ]
-    
+
     #     save_file = 'torch_project.xlsx'
-    
+
     #     excel_file = os.getcwd() + '\\' + save_file
     #     workbook = xlsxwriter.Workbook(excel_file)
-    
+
     #     '''Export all assemblies if none specified '''
     #     if not _ids:
     #         _ids = [el for el in self._assembly_manager._mgr]
-    
+
     #     ''' Create worksheet for each assembly to be exported '''
     #     sheet_dict = {}
     #     for _id in _ids:
     #         sheet_dict[_id] = workbook.add_worksheet()
     #         page = [k for k,v in self._notebook_manager.items() if v == _id][0]
-    
+
     #         ''' Write main header... '''
     #         header_data = get_header(_id, page)
     #         for i,el in enumerate(header_fields):
     #             sheet_dict[_id].write(i, 0, el)
     #             sheet_dict[_id].write(i, 1, header_data[i])
-    
+
     #         ''' ...and node fields header '''
     #         for i,el in enumerate(fields):
     #             sheet_dict[_id].write(y_offset-1,i,el)
-    
+
     #         ''' Get all nodes still present in CTC '''
     #         nodes = list(page.ctc_dict)
-    
+
     #         counter = 0
     #         for node in nodes:
     #             data = get_output_data(_id, node)
@@ -1632,7 +1632,7 @@ class AssemblyManager():
     #                 y = counter + y_offset
     #                 sheet_dict[_id].write(y, x, data[i])
     #             counter += 1
-    
+
     #     workbook.close()
 
 
@@ -1657,6 +1657,7 @@ class StepParse(nx.DiGraph):
 
         self.default_label_part = 'Unnamed item'
         self.default_label_ass = 'Unnamed item'
+        self.head_name = '== PROJECT =='
 
         ''' Mid-grey for default shape colour '''
         self.SHAPE_COLOUR_DEFAULT = Quantity_Color(0.5, 0.5, 0.5, Quantity_TOC_RGB)
@@ -1834,7 +1835,7 @@ class StepParse(nx.DiGraph):
         self.add_node(head)
         self.nodes[head]['occ_label'] = None
         self.nodes[head]['occ_name'] = None
-        self.nodes[head]['screen_name'] = ' == YOUR ADVERT HERE FOR £199 A MONTH == '
+        self.nodes[head]['screen_name'] = self.head_name
         self.nodes[head]['shape_raw'] = (None, None)
         self.nodes[head]['shape_loc'] = (None, None)
         self.nodes[head]['is_subshape'] = False
@@ -2056,6 +2057,8 @@ class StepParse(nx.DiGraph):
         _get_shapes()
         # return output_shapes
 
+        self.remove_redundants()
+
 
 
     def get_image_data(self, node, default_colour = False):
@@ -2145,7 +2148,7 @@ class StepParse(nx.DiGraph):
         ''' Get list of redundant nodes and link past them... '''
         _to_remove = []
         for _node in _tree:
-            if self.out_degree(_node) == 1:
+            if self.out_degree(_node) == 1 and self.nodes[_node]['screen_name'] != self.head_name:
                 _parent = self.get_parent(_node)
                 _child  = self.get_child(_node)
                 ''' Don't remove if at head of tree (i.e. if in_degree == 0)...
