@@ -1,6 +1,6 @@
 ## Quick start guide for running standalone executable
 
-https://zenodo.org/badge/doi/10.5281/zenodo.5101161.svg
+![alt text](https://zenodo.org/badge/doi/10.5281/zenodo.5101161.svg)
 
 Go to the latest release *via* the "Releases" tab, then:
 
