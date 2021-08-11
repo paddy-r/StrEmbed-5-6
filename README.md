@@ -4,9 +4,8 @@
 
 Go to the latest release *via* the "Releases" tab, then:
 
-1. Download the source code file bundle (```.zip``` or ```.tar.gz``` format).
-2. Download one of the executables (```.exe```).
-3. Double-click the ```.exe``` file and ```StrEmbed-5-6``` will run.
+1. Download one of the executables (```.exe```).
+2. Double-click the ```.exe``` file and ```StrEmbed-5-6``` will run.
 
 ___
 
