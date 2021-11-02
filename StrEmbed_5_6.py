@@ -200,7 +200,6 @@ class MyTree(ctc.CustomTreeCtrl):
 
 
 
-
 ''' HR 26/05/21
     New class with overridden constructor to reduce code here
     Only differences are:
@@ -459,6 +458,8 @@ class MainWindow(wx.Frame):
         ID_SETTINGS = self.NewControlId()
         ID_ABOUT = self.NewControlId()
 
+        ID_LINE_VIEW = self.NewControlId()
+
         self.ID_ASSISTANT_PAGE = self.NewControlId()
 
 
@@ -549,12 +550,18 @@ class MainWindow(wx.Frame):
 
         settings_tab = RB.RibbonPage(self._ribbon, wx.ID_ANY, "Settings & help")
 
-        settings_panel = RB.RibbonPanel(settings_tab, wx.ID_ANY, "Settings",
+        info_panel = RB.RibbonPanel(settings_tab, wx.ID_ANY, "Info",
                                        style=RB.RIBBON_PANEL_NO_AUTO_MINIMISE)
 
-        settings_tools = RB.RibbonToolBar(settings_panel, wx.ID_ANY)
-        settings_tools.AddTool(ID_SETTINGS, wx.ArtProvider.GetBitmap(wx.ART_HELP_SETTINGS, wx.ART_OTHER, wx.Size(self._default_size)))
-        settings_tools.AddTool(ID_ABOUT, wx.ArtProvider.GetBitmap(wx.ART_QUESTION, wx.ART_OTHER, wx.Size(self._default_size)))
+        info_tools = RB.RibbonToolBar(info_panel, wx.ID_ANY)
+        info_tools.AddTool(ID_SETTINGS, wx.ArtProvider.GetBitmap(wx.ART_HELP_SETTINGS, wx.ART_OTHER, wx.Size(self._default_size)))
+        info_tools.AddTool(ID_ABOUT, wx.ArtProvider.GetBitmap(wx.ART_QUESTION, wx.ART_OTHER, wx.Size(self._default_size)))
+
+        view_panel = RB.RibbonPanel(settings_tab, wx.ID_ANY, "View",
+                                       style=RB.RIBBON_PANEL_NO_AUTO_MINIMISE)
+
+        view_tools = RB.RibbonToolBar(view_panel, wx.ID_ANY)
+        view_tools.AddTool(ID_LINE_VIEW, wx.ArtProvider.GetBitmap(wx.ART_HELP_SETTINGS, wx.ART_OTHER, wx.Size(self._default_size)))
 
         self._ribbon.Realize()
 
@@ -639,6 +646,8 @@ class MainWindow(wx.Frame):
 
         self.Bind(RB.EVT_RIBBONTOOLBAR_CLICKED, self.OnSettings, id = ID_SETTINGS)
         self.Bind(RB.EVT_RIBBONTOOLBAR_CLICKED, self.OnAbout, id = ID_ABOUT)
+
+        self.Bind(RB.EVT_RIBBONTOOLBAR_CLICKED, self.OnLineViewMode, id = ID_LINE_VIEW)
 
         self.Bind(RB.EVT_RIBBONBAR_PAGE_CHANGING, self.OnRibbonTabChanging)
 
@@ -1154,7 +1163,14 @@ class MainWindow(wx.Frame):
 
         # for item in to_display:
         for item in self.assembly.nodes:
-            shape, c = self.assembly.nodes[item]['shape_loc']
+            ''' HR 29/10/21 Do not display if "hide" is true '''
+            if 'hide' in self.assembly.nodes[item]:
+                if self.assembly.nodes[item]['hide']:
+                    continue
+            try:
+                shape, c = self.assembly.nodes[item]['shape_loc']
+            except:
+                shape, c = None, None
             ''' Don't display assemblies, i.e. nodes without shapes '''
             if not shape:
                 continue
@@ -1284,6 +1300,9 @@ class MainWindow(wx.Frame):
                 self.Bind(wx.EVT_MENU, self.OnDisaggregate, menu_item)
                 menu_item = menu.Append(wx.ID_ANY, 'Remove part', 'Remove part')
                 self.Bind(wx.EVT_MENU, self.OnRemoveNode, menu_item)
+                ''' HR 29/10/21 To allow parts to be hidden in 3D viewer '''
+                menu_item = menu.Append(wx.ID_ANY, 'Hide/show', 'Hide/show part in 3D view')
+                self.Bind(wx.EVT_MENU, self.OnHideMode, menu_item)
             else:
                 ''' Assembly options '''
                 menu_item = menu.Append(wx.ID_ANY, 'Flatten', 'Flatten assembly')
@@ -1853,6 +1872,42 @@ class MainWindow(wx.Frame):
 
 
 
+    def OnHideMode(self, event = None):
+
+        selected_items = self.selected_items
+
+        ''' Check selected items are present and suitable '''
+        if not selected_items:
+            print('No items selected')
+            return
+
+        ''' Further checks '''
+        if len(selected_items) >= 1:
+            print('Selected item(s) to remove:\n')
+            for node in selected_items:
+                print('ID = ', node)
+        else:
+            print('Cannot remove: no items selected\n')
+            return
+
+        ''' Create/toggle hide mode of node '''
+        node_dict = self.assembly.nodes[selected_items[0]]
+        if 'hide' not in node_dict:
+            print('Creating hide tag and setting true')
+            node_dict['hide'] = True
+        else:
+            if node_dict['hide']:
+                print('Hide tag present, setting to false')
+                node_dict['hide'] = False
+            else:
+                print('Hide tag present, setting to false')
+                node_dict['hide'] = True
+
+        self.Update3DView()
+
+
+
+    ''' HR 29/10/21 To hide/show selected part '''
     def sort_check(self):
 
         ''' Check only one non-part item selected '''
@@ -2104,6 +2159,20 @@ class MainWindow(wx.Frame):
 
 
 
+    def OnLineViewMode(self, event):
+        ''' HR 28/10/21 To toggle lattice line view mode
+            Default is to show all; toggle removes any unpopulated lines '''
+        print('Line view toggled')
+        latt = self._assembly_manager
+        if latt.DO_ALL_LATTICE_LINES:
+            latt.DO_ALL_LATTICE_LINES = False
+        else:
+            latt.DO_ALL_LATTICE_LINES = True
+        ''' Redraw lattice'''
+        self.DisplayLattice()
+
+
+
     def OnResize(self, event):
         ''' Display window size in status bar '''
         self.AddText("Window size = " + format(self.GetSize()))
@@ -2219,7 +2288,7 @@ class MainWindow(wx.Frame):
 
 
 
-    def OnNotebookPageChanged(self, _id_old, event):
+    def OnNotebookPageChanged(self, _id_old, event, selected_old = [], assembly_old = None):
 
         print('Notebook page changed')
 

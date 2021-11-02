@@ -193,6 +193,7 @@ class AssemblyManager():
         # self.new_part_text     = 'Unnamed item'
 
         self.ENFORCE_BINARY_DEFAULT = True
+        self.DO_ALL_LATTICE_LINES = True
 
         '''
             Set up lattice plot viewer
@@ -1407,7 +1408,13 @@ class AssemblyManager():
         latt.edge_dict = {}
 
         ''' Draw outline of each (populated) level, with end points '''
-        for k,v in latt.S_p.items():
+        ''' HR 28/10/21 To add option to realise all lines, not just populated ones '''
+        if self.DO_ALL_LATTICE_LINES:
+            lines = latt.S_p_all
+        else:
+            lines = latt.S_p
+
+        for k,v in lines.items():
             if v <= 1:
                 line_pos = 0
             else:
@@ -1765,6 +1772,65 @@ class StepParse(nx.DiGraph):
     @property
     def product_names(self):
 
+        ''' HR 01/11/21 To fix STEP product name parsing problems '''
+        def get_product_name(line):
+            ''' First strip off basic extraneous stuff; this should work universally '''
+            line_corr = line.split("PRODUCT")[1].strip().rstrip(";").lstrip("(").strip().split("#")[0].strip().rstrip("(").strip().strip(",").strip()
+            ''' Next, deal with remaining rightmost field
+                Fine for all case studies so far, but might not be universal solution; would need to deal with text in field, if present
+                Note: Currently yields wrong name if text present in rightmost field '''
+            line_corr = line_corr.rstrip("'").strip().rstrip("'").strip().rstrip(",")
+            # print('Stripped back text: ', line_corr)
+
+            chunks = line_corr.split(",")
+            # print('Chunks by comma: ', chunks)
+
+            l = len(chunks)
+            # print('Length: ', l)
+
+            if l == 2:
+                ''' If only two chunks, first chunk must be name, even if two empty chunks '''
+                name = chunks[0]
+                # print("Length = 2, name is first chunk: ", name)
+
+            else:
+                if (l % 2) != 0:
+                    ''' If l > 2 and odd, last chunk must be empty => name is all chunks except last '''
+                    name = ''.join(chunks[:-1])
+                    print("Length = ", l, " and odd, name is all chunks except last: ", name)
+                else:
+                    ''' Last remaining case is that l > 2 and even, for which two possible outcomes '''
+                    lh = int(l/2)
+                    print('Half length = ', lh)
+                    ''' Chop text into two halves '''
+                    half1 = ','.join(chunks[0:lh]).strip()
+                    half2 = ','.join(chunks[lh:]).strip()
+                    # print('Half 1: ', half1)
+                    # print('Half 2: ', half2)
+                    if half1 == half2:
+                        ''' Outcome 1: Both halves the same, i.e. name repeated in two fields '''
+                        name = half1
+                        # print("Length > 2 and even and halves match, name is first half: ", name)
+                    else:
+                        ''' Outcome 2: Second field empty => name is all chunks except last '''
+                        name = ','.join(chunks[:-1])
+                        # print("Length > 2 and even and halves do NOT match, name is all chunks except last: ", name)
+
+            ''' HR 01/11/21 Workaround for problem of multiple apostropges being reduced to single one in OCC
+                Address unresolved OCC bug 32421: https://tracker.dev.opencascade.org/view.php?id=32421
+                Possibly fixed via 32310: https://tracker.dev.opencascade.org/view.php?id=32310 
+                but needs testing here after updating PythonOCC '''
+            while "''" in name:
+                name = name.replace("''", "'")
+
+            ''' Remove double quotes if present; may be more elegant method for doing this '''
+            name = name[1:-1]
+
+            # return line_corr, name
+            return name
+
+
+
         ''' HR May 21 To get all product names from STEP files
             This all assumes products have non-empty names,
             otherwise logic would have to be completely revised
@@ -1773,7 +1839,14 @@ class StepParse(nx.DiGraph):
             lines = step_search(file = self.step_filename, keywords = ['PRODUCT ', 'PRODUCT('], exclusions = ['kevinphillipsbong'])[0]
             ''' HR 03/06/21 Product name parsing corrected '''
             # self._product_names = [line.split(",")[0].split("(")[1].lstrip().rstrip().lstrip("'").rstrip("'").lstrip().rstrip() for line in lines]
-            self._product_names = [line.split("PRODUCT")[1].split(",")[0].rstrip().lstrip().lstrip("(").lstrip().lstrip("'").strip("'") for line in lines]
+            # self._product_names = [line.split("PRODUCT")[1].split(",")[0].rstrip().lstrip().lstrip("(").lstrip().lstrip("'").strip("'") for line in lines]
+
+
+
+            self._product_names = []
+            for line in lines:
+                self._product_names.append(get_product_name(line))
+
         return self._product_names
 
 
@@ -2116,15 +2189,17 @@ class StepParse(nx.DiGraph):
 
         ''' If shape exists in node dict, render node
             else (b/c node is assembly) get all non-sub-shapes and render all '''
-        if d['shape_loc'][0]:
-            _to_render = [node]
-        else:
-            _to_render = []
-            for el in nx.descendants(self, node):
-                d_sub = self.nodes[el]
-                ''' Add to render list if shape present and not sub-shape '''
-                if d_sub['shape_loc'][0] and not d_sub['is_subshape']:
-                    _to_render.append(el)
+        _to_render = []
+        if 'shape_loc' in d:
+            if d['shape_loc'][0]:
+                _to_render.append(node)
+            else:
+                for el in nx.descendants(self, node):
+                    d_sub = self.nodes[el]
+                    ''' Add to render list if shape present and not sub-shape '''
+                    if 'shape_loc' in d_sub:
+                        if d_sub['shape_loc'][0] and not d_sub['is_subshape']:
+                            _to_render.append(el)
 
         ''' Get image; default to "no image" png if not successful '''
         if _to_render:
@@ -2297,6 +2372,8 @@ class StepParse(nx.DiGraph):
         leaves = self.leaves
         n = len(leaves)
         ''' ...but only needed for specified nodes '''
+        ''' HR 28/10/21 To add option to display all lines, not just populated ones '''
+        self.S_p_all = {level:self.get_comb(n,level) for level in range(int(n+1))}
         self.S_p = {level:self.get_comb(n,level) for level in levels}
 
         ''' Create map of leaves to combinatorial numbering starting at 1... '''
