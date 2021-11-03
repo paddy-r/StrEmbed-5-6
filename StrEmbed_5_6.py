@@ -460,6 +460,7 @@ class MainWindow(wx.Frame):
         ID_ABOUT = self.NewControlId()
 
         ID_LINE_VIEW = self.NewControlId()
+        ID_COMMON_SELECTOR_VIEW = self.NewControlId()
 
         self.ID_ASSISTANT_PAGE = self.NewControlId()
 
@@ -563,6 +564,7 @@ class MainWindow(wx.Frame):
 
         view_tools = RB.RibbonToolBar(view_panel, wx.ID_ANY)
         view_tools.AddTool(ID_LINE_VIEW, wx.ArtProvider.GetBitmap(wx.ART_HELP_SETTINGS, wx.ART_OTHER, wx.Size(self._default_size)))
+        view_tools.AddTool(ID_COMMON_SELECTOR_VIEW, wx.ArtProvider.GetBitmap(wx.ART_HELP_SETTINGS, wx.ART_OTHER, wx.Size(self._default_size)))
 
         self._ribbon.Realize()
 
@@ -649,6 +651,7 @@ class MainWindow(wx.Frame):
         self.Bind(RB.EVT_RIBBONTOOLBAR_CLICKED, self.OnAbout, id = ID_ABOUT)
 
         self.Bind(RB.EVT_RIBBONTOOLBAR_CLICKED, self.OnLineViewMode, id = ID_LINE_VIEW)
+        self.Bind(RB.EVT_RIBBONTOOLBAR_CLICKED, self.OnCommonSelectorMode, id = ID_COMMON_SELECTOR_VIEW)
 
         self.Bind(RB.EVT_RIBBONBAR_PAGE_CHANGING, self.OnRibbonTabChanging)
 
@@ -701,11 +704,13 @@ class MainWindow(wx.Frame):
         print(_name2)
 
         p1 = [el for el in self._notebook_manager if el.name == _name1][0]
-        a1 = self._assembly_manager._mgr[self._notebook_manager[p1]]
+        id1 = self._notebook_manager[p1]
+        # a1 = self._assembly_manager._mgr[id1]
         p2 = [el for el in self._notebook_manager if el.name == _name2][0]
-        a2 = self._assembly_manager._mgr[self._notebook_manager[p2]]
+        id2 = self._notebook_manager[p2]
+        # a2 = self._assembly_manager._mgr[id2]
 
-        return a1, a2
+        return id1, id2
 
 
 
@@ -1231,7 +1236,13 @@ class MainWindow(wx.Frame):
         ''' Create all guide lines, nodes and edges '''
         self._assembly_manager.create_plot_elements()
         ''' ...then update active assembly... '''
+        active = self.assembly.assembly_id
+        selected_items = []
+        to_select = []
+        to_unselect = self.assembly.leaves
+
         self._assembly_manager.update_colours_active(to_activate = [_id])
+        self._assembly_manager.update_colours_selected(active, selected = selected_items, to_select = to_select, to_unselect = to_unselect)
 
         print('Finished "DisplayLattice"')
         self.DoDraw('DisplayLattice')
@@ -1388,7 +1399,7 @@ class MainWindow(wx.Frame):
 
 
 
-    ''' HR 02/11/12 To differentiate between manual checking (already done via TreeItemChecked)
+    ''' HR 02/11/21 To differentiate between manual checking (already done via TreeItemChecked)
         and automated checking upon notebook page change to allow common selector view '''
     def check_items(self, nodes):
         print('Trying to check ctc items in new page')
@@ -1404,21 +1415,6 @@ class MainWindow(wx.Frame):
         and for sub-shapes; also images are held in memory, not saved,
         to avoid temporary folder(s) being created '''
     def TreeItemChecked(self, event):
-    # def TreeItemChecked(self, event = None, node = None):
-
-        # ''' HR 02/11/21 Some changes here to allow common selector view
-        #     that displays same items when assembly tab changes, if items present '''
-        # if (event == None) and (node == None):
-        #     print('No items to be checked; aborting')
-        #     return
-
-        # ''' Get checked item and search for corresponding image '''
-        # if event:
-        #     item = event.GetItem()
-        #     node = self._page.ctc_dict_inv[item]
-        # else:
-        #     item = self._page.ctc_dict[node]
-
         item = event.GetItem()
         node = self._page.ctc_dict_inv[item]
 
@@ -1942,7 +1938,6 @@ class MainWindow(wx.Frame):
 
 
 
-    ''' HR 29/10/21 To hide/show selected part '''
     def sort_check(self):
 
         ''' Check only one non-part item selected '''
@@ -2208,6 +2203,15 @@ class MainWindow(wx.Frame):
 
 
 
+    def OnCommonSelectorMode(self, event = None):
+        print('Common selector view mode toggled')
+        if self.COMMON_SELECTOR_VIEW:
+            self.COMMON_SELECTOR_VIEW = False
+        else:
+            self.COMMON_SELECTOR_VIEW = True
+
+
+
     def OnResize(self, event):
         ''' Display window size in status bar '''
         self.AddText("Window size = " + format(self.GetSize()))
@@ -2335,7 +2339,10 @@ class MainWindow(wx.Frame):
         else:
             _page = self._notebook.GetPage(_selection)
             _id_old = self._notebook_manager[_page]
-            checked_old = self.checked_nodes
+            if self.COMMON_SELECTOR_VIEW:
+                checked_old = self.checked_nodes
+            else:
+                checked_old = []
 
         print('Checked nodes in old page: ', checked_old)
 
@@ -2362,6 +2369,9 @@ class MainWindow(wx.Frame):
         self._page = _page
         print('Assembly ID: ', _id)
 
+        to_select = self.selected_items
+        to_unselect = [el for el in self.assembly.nodes if el not in to_select]
+
         ''' Switch to activated assembly in lattive view '''
         if not self._page.file_open:
             self.DisplayLattice(called_by = 'OnNotebookPageChanged')
@@ -2371,7 +2381,7 @@ class MainWindow(wx.Frame):
             else:
                 to_deactivate = [_id_old]
             self._assembly_manager.update_colours_active(to_activate = [_id], to_deactivate = to_deactivate)
-            self._assembly_manager.update_colours_selected(_id, to_select = self.selected_items)
+            self._assembly_manager.update_colours_selected(_id, to_select = to_select, to_unselect = to_unselect)
             self.DoDraw(called_by = 'OnNotebookPageChanged')
 
 

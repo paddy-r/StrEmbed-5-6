@@ -1488,7 +1488,9 @@ class AssemblyManager():
 
         ''' Edges from leaves to infimum '''
         to_select_leaves = [el for el in to_select if el in leaves]
+        # print('To select: ', to_select_leaves)
         to_unselect_leaves = [el for el in to_unselect if el in leaves]
+        # to_unselect_leaves = set(leaves) - set(to_select_leaves)
         ''' Selections '''
         for leaf in to_select_leaves:
             latt.edge_dict[(leaf,None)].set_color(sc)
