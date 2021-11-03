@@ -1841,8 +1841,6 @@ class StepParse(nx.DiGraph):
             # self._product_names = [line.split(",")[0].split("(")[1].lstrip().rstrip().lstrip("'").rstrip("'").lstrip().rstrip() for line in lines]
             # self._product_names = [line.split("PRODUCT")[1].split(",")[0].rstrip().lstrip().lstrip("(").lstrip().lstrip("'").strip("'") for line in lines]
 
-
-
             self._product_names = []
             for line in lines:
                 self._product_names.append(get_product_name(line))

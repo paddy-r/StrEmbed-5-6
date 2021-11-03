@@ -204,7 +204,7 @@ class MyTree(ctc.CustomTreeCtrl):
     New class with overridden constructor to reduce code here
     Only differences are:
         (1) Don't bind EVT_LEFT_UP as that is bound later, and
-        (2) Apply style to panel 
+        (2) Apply style to panel
     Some code duplication from Pythonocc here:
     https://github.com/tpaviot/pythonocc-core '''
 class MyBaseViewer(wxDisplay.wxBaseViewer):
@@ -425,6 +425,7 @@ class MainWindow(wx.Frame):
 
         self._highlight_colour = wx.RED
         self.LATTICE_PLOT_MODE_DEFAULT = True
+        self.COMMON_SELECTOR_VIEW = True
         self.origin = (0,0)
         self.click_pos = None
 
@@ -1378,15 +1379,48 @@ class MainWindow(wx.Frame):
 
 
 
+    ''' HR 02/11/21 To uncheck all ctc items to allow common selector view '''
+    def uncheck_all(self):
+        ''' Uncheck via "checked = False " '''
+        print('Trying to uncheck all ctc items in new page')
+        for item in self._page.ctc_dict_inv.keys():
+            self._page.partTree_ctc.CheckItem(item, checked = False)
+
+
+
+    ''' HR 02/11/12 To differentiate between manual checking (already done via TreeItemChecked)
+        and automated checking upon notebook page change to allow common selector view '''
+    def check_items(self, nodes):
+        print('Trying to check ctc items in new page')
+        for node in nodes:
+            item = self._page.ctc_dict[node]
+            self._page.partTree_ctc.CheckItem(item)
+
+
+
+
     ''' HR 24/05/21
         To overhaul to account for now-improved OCC-based shape parsing
         and for sub-shapes; also images are held in memory, not saved,
         to avoid temporary folder(s) being created '''
     def TreeItemChecked(self, event):
+    # def TreeItemChecked(self, event = None, node = None):
 
-        ''' Get checked item and search for corresponding image '''
+        # ''' HR 02/11/21 Some changes here to allow common selector view
+        #     that displays same items when assembly tab changes, if items present '''
+        # if (event == None) and (node == None):
+        #     print('No items to be checked; aborting')
+        #     return
+
+        # ''' Get checked item and search for corresponding image '''
+        # if event:
+        #     item = event.GetItem()
+        #     node = self._page.ctc_dict_inv[item]
+        # else:
+        #     item = self._page.ctc_dict[node]
+
         item = event.GetItem()
-        node  = self._page.ctc_dict_inv[item]
+        node = self._page.ctc_dict_inv[item]
 
         print('Getting image...')
         print('Node ID = ', node)
@@ -1429,14 +1463,15 @@ class MainWindow(wx.Frame):
                 pass
 
         else:
-            ''' Remove button from slct_panel '''
-            button = self._page.button_dict[node]
-            button.Destroy()
-
-            ''' Update global list and dict '''
-            self._page.button_dict.pop(node)
-            self._page.button_dict_inv.pop(button)
-            self._page.button_img_dict.pop(node)
+            if node in self._page.button_dict:
+                ''' Remove button from slct_panel '''
+                button = self._page.button_dict[node]
+                button.Destroy()
+    
+                ''' Update global list and dict '''
+                self._page.button_dict.pop(node)
+                self._page.button_dict_inv.pop(button)
+                self._page.button_img_dict.pop(node)
 
         self._page.slct_panel.SetupScrolling(scrollToTop = False)
 
@@ -2268,6 +2303,23 @@ class MainWindow(wx.Frame):
 
 
 
+    ''' HR 02/11/21 To grab IDs of nodes of all checked items in parts view '''
+    @property
+    def checked_nodes(self):
+        page = self._page
+        _id = self._notebook_manager[page]
+        assembly = self._assembly_manager._mgr[_id]
+
+        checked_items = []
+
+        for node,item in page.ctc_dict.items():
+            if item.IsChecked():
+                checked_items.append(node)
+
+        return checked_items
+
+
+
     def OnNotebookPageChanging(self, event = None):
 
         print('Notebook page changing')
@@ -2279,16 +2331,20 @@ class MainWindow(wx.Frame):
         if _selection == wx.NOT_FOUND:
             print('No previous page found')
             _id_old = None
+            checked_old = []
         else:
             _page = self._notebook.GetPage(_selection)
             _id_old = self._notebook_manager[_page]
+            checked_old = self.checked_nodes
 
-        wx.CallAfter(self.OnNotebookPageChanged, _id_old, event)
+        print('Checked nodes in old page: ', checked_old)
+
+        wx.CallAfter(self.OnNotebookPageChanged, _id_old, event, checked_old = checked_old)
         event.Skip()
 
 
 
-    def OnNotebookPageChanged(self, _id_old, event, selected_old = [], assembly_old = None):
+    def OnNotebookPageChanged(self, _id_old, event, checked_old = []):
 
         print('Notebook page changed')
 
@@ -2317,6 +2373,33 @@ class MainWindow(wx.Frame):
             self._assembly_manager.update_colours_active(to_activate = [_id], to_deactivate = to_deactivate)
             self._assembly_manager.update_colours_selected(_id, to_select = self.selected_items)
             self.DoDraw(called_by = 'OnNotebookPageChanged')
+
+
+
+        ''' HR 02/11/12 To check in parts view + show in selector view
+            all items checked/shown in previous page, if present in lattice '''
+        ''' 1. Get all lattice nodes corresponding to checked items in old page '''
+        if self.COMMON_SELECTOR_VIEW:
+            latt_nodes = []
+            for node_old in checked_old:
+                latt_node = self._assembly_manager.get_master_node(_id_old, node_old)
+                if latt_node:
+                    latt_nodes.append(latt_node)
+            print('Lattice IDs of checked nodes: ', latt_nodes)
+            ''' 2. Get all nodes and ctc items in current page, if present '''
+            checked_new = []
+            for latt_node in latt_nodes:
+                latt_dict = self._assembly_manager._lattice.nodes[latt_node]
+                print('Assembly ID, latt dict: ', _id, latt_dict)
+                if _id in latt_dict:
+                    checked_new.append(latt_dict[_id])
+            print('Nodes in new page: ', checked_new)
+            ''' 3. Uncheck all ctc items '''
+            self.uncheck_all()
+            ''' 4. Check ctc items '''
+            self.check_items(checked_new)
+            ''' 5. Show all images in selector view '''
+            ''' Happens automatically, as checking caught by "TreeItemChecked" '''
 
         event.Skip()
 
