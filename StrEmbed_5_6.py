@@ -1509,7 +1509,6 @@ class MainWindow(wx.Frame):
         as would redo for every selected item...
         or if new selections are same as previous
         '''
-        # if self.veto or (previous_selections == new_selections):
         if self.veto or (previous_selections == new_selections):
             print('Vetoing tree selection change')
             event.Veto()
