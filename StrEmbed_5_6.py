@@ -426,6 +426,8 @@ class MainWindow(wx.Frame):
         self._highlight_colour = wx.RED
         self.LATTICE_PLOT_MODE_DEFAULT = True
         self.COMMON_SELECTOR_VIEW = True
+        self.SELECT_ALL_DESCENDANTS = False
+
         self.origin = (0,0)
         self.click_pos = None
 
@@ -710,6 +712,7 @@ class MainWindow(wx.Frame):
         id2 = self._notebook_manager[p2]
         # a2 = self._assembly_manager._mgr[id2]
 
+        # return a1, a2
         return id1, id2
 
 
@@ -1242,7 +1245,8 @@ class MainWindow(wx.Frame):
         to_unselect = self.assembly.leaves
 
         self._assembly_manager.update_colours_active(to_activate = [_id])
-        self._assembly_manager.update_colours_selected(active, selected = selected_items, to_select = to_select, to_unselect = to_unselect)
+        # self._assembly_manager.update_colours_selected(active, selected = selected_items, to_select = to_select, to_unselect = to_unselect)
+        self._assembly_manager.update_colours_selected(active, selected = selected_items, to_select = to_select)
 
         print('Finished "DisplayLattice"')
         self.DoDraw('DisplayLattice')
@@ -1483,12 +1487,27 @@ class MainWindow(wx.Frame):
 
     def TreeItemSelected(self, previous_selections, event):
 
+        new_selections = self.selected_items
+
+        ''' HR 05/11/21 Switch to allow all children to be selected '''
+        print('Selected items:', new_selections)
+        if self.SELECT_ALL_DESCENDANTS:
+            tree = self._page.partTree_ctc
+            tree_item = event.GetItem()
+            # tree.SelectAllChildren(tree_item)
+            new_selections_copy = [el for el in new_selections]
+            for node in new_selections_copy:
+                new_selections.extend(nx.descendants(self.assembly, node))
+            new_selections = list(set(new_selections))
+
+            print('Selected items and all children: ', new_selections)
+
         '''
         Don't execute if raised by 3D view selection...
         as would redo for every selected item...
         or if new selections are same as previous
         '''
-        new_selections = self.selected_items
+        # if self.veto or (previous_selections == new_selections):
         if self.veto or (previous_selections == new_selections):
             print('Vetoing tree selection change')
             event.Veto()
@@ -1628,8 +1647,6 @@ class MainWindow(wx.Frame):
 
                 list_ = [el for el in range(len(plot_obj.leaves)+1)]
                 y__ = get_nearest(event.ydata, list_)
-
-                self.OnNewNodeClick(y__, event.xdata)
                 return
 
             print('Inside tolerance, (de)selecting nearest node')
@@ -1651,24 +1668,21 @@ class MainWindow(wx.Frame):
 
             ''' Update node colourings in lattice view '''
             if node in selected_items:
+                print('Unselecting...')
                 to_select = []
                 to_unselect = [node]
             else:
-                to_select = []
-                to_unselect = [node]
+                print('Selecting...')
+                to_select = [node]
+                to_unselect = []
+
             self._assembly_manager.update_colours_selected(active, selected = selected_items, to_select = to_select, to_unselect = to_unselect)
+            # self._assembly_manager.update_colours_selected(active, selected = selected_items, to_select = to_select)
 
             self.DoDraw('OnLatticeMouseRelease')
 
             ''' Update items in parts list using assembly node ID '''
             self.UpdateListSelections(node)
-
-
-
-    def OnNewNodeClick(self, y_, x_):
-
-        ''' HR JAN 2021 '''
-        print('Not creating "alt" assembly: method removed entirely')
 
 
 
@@ -1679,9 +1693,10 @@ class MainWindow(wx.Frame):
 
         _id = self.assembly.assembly_id
         to_select = self.selected_items
-        to_unselect = [el for el in self.assembly.nodes if el not in to_select]
+        # to_unselect = [el for el in self.assembly.nodes if el not in to_select]
 
-        self._assembly_manager.update_colours_selected(_id, selected = [], to_select = to_select, to_unselect = to_unselect)
+        # self._assembly_manager.update_colours_selected(_id, selected = [], to_select = to_select, to_unselect = to_unselect)
+        self._assembly_manager.update_colours_selected(_id, selected = [], to_select = to_select)
 
         self.DoDraw('UpdateSelectedNodes')
 
@@ -2381,7 +2396,8 @@ class MainWindow(wx.Frame):
             else:
                 to_deactivate = [_id_old]
             self._assembly_manager.update_colours_active(to_activate = [_id], to_deactivate = to_deactivate)
-            self._assembly_manager.update_colours_selected(_id, to_select = to_select, to_unselect = to_unselect)
+            # self._assembly_manager.update_colours_selected(_id, to_select = to_select, to_unselect = to_unselect)
+            self._assembly_manager.update_colours_selected(_id, to_select = to_select)
             self.DoDraw(called_by = 'OnNotebookPageChanged')
 
 

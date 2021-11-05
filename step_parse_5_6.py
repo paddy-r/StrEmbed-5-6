@@ -1448,9 +1448,26 @@ class AssemblyManager():
 
     def update_colours_selected(self, active, selected = [], to_select = [], to_unselect = []):
 
+        print('Running "update_colours_selected"')
+
+        ''' Get active elements '''
+        active_nodes = [node for node in self._lattice.nodes if active in self._lattice.nodes[node]]
+        active_edges = [edge for edge in self._lattice.edges if active in self._lattice.edges[edge]]
+        print('Active nodes: ', active_nodes)
+        print('Active edges: ', active_edges)
+
         selected = [self.get_master_node(active, node) for node in selected]
+        selected = [node for node in selected if node in active_nodes]
+
         to_select = [self.get_master_node(active, node) for node in to_select]
-        to_unselect = [self.get_master_node(active, node) for node in to_unselect]
+        to_select = [node for node in to_select if node in active_nodes]
+
+        if to_unselect:
+            # to_unselect = [self.get_master_node(active, node) for node in to_unselect if active in self._lattice.nodes[node]]
+            to_unselect = [self.get_master_node(active, node) for node in to_unselect]
+        else:
+            to_unselect = [node for node in self._lattice.nodes if node not in to_select]
+        to_unselect = [node for node in to_unselect if active in self._lattice.nodes[node]]
 
         print('selected: ', selected)
         print('to_select: ', to_select)
@@ -1468,10 +1485,10 @@ class AssemblyManager():
             latt.node_dict[node].set_facecolor(sc)
             ''' Edges '''
             for u,v in latt.in_edges(node):
-                if (u in selected) or (u in to_select):
+                if ((u in selected) or (u in to_select)) and (u,v) in active_edges:
                     latt.edge_dict[(u,v)].set_color(sc)
             for u,v in latt.out_edges(node):
-                if (v in selected) or (v in to_select):
+                if ((v in selected) or (v in to_select)) and (u,v) in active_edges:
                     latt.edge_dict[(u,v)].set_color(sc)
 
         ''' Deselections '''
@@ -1480,17 +1497,20 @@ class AssemblyManager():
             latt.node_dict[node].set_facecolor(dc)
             ''' Edges '''
             for u,v in latt.in_edges(node):
-                if u in selected:
+                # if (u in selected) or (u in to_select):
+                if ((u in selected) or (u in to_select)) and (u,v) in active_edges:
+                # if (u in to_unselect):
+                # if (u not in selected) or (u not in to_select):
                     latt.edge_dict[(u,v)].set_color(dc)
             for u,v in latt.out_edges(node):
-                if v in selected:
+                if ((v in selected) or (v in to_select)) and (u,v) in active_edges:
+                # if (v in to_unselect):
+                # if (v not in selected) or (v in to_select):
                     latt.edge_dict[(u,v)].set_color(dc)
 
         ''' Edges from leaves to infimum '''
         to_select_leaves = [el for el in to_select if el in leaves]
-        # print('To select: ', to_select_leaves)
         to_unselect_leaves = [el for el in to_unselect if el in leaves]
-        # to_unselect_leaves = set(leaves) - set(to_select_leaves)
         ''' Selections '''
         for leaf in to_select_leaves:
             latt.edge_dict[(leaf,None)].set_color(sc)
@@ -1516,36 +1536,42 @@ class AssemblyManager():
         edges = latt.edges
         leaves = latt.leaves
 
-        ic = self.ic
+        ''' Active colour '''
         dc = self.dc
+        ''' Inactive colour '''
+        ic = self.ic
 
         ''' Nodes '''
         for node in nodes:
             _dict = nodes[node]
-            # ''' Activate '''
+            # Activate
             if any(el in to_activate for el in _dict):
                 latt.node_dict[node].set_facecolor(dc)
-            # ''' Deactivate '''
+            # Deactivate
             elif any(el in to_deactivate for el in _dict):
                 latt.node_dict[node].set_facecolor(ic)
 
         ''' Edges '''
         for edge in edges:
             _dict = edges[edge]
-            # ''' Activate '''
+            # Activate
             if any(el in to_activate for el in _dict):
                 latt.edge_dict[edge].set_color(dc)
-            # ''' Deactivate '''
+            # Deactivate
             elif any(el in to_deactivate for el in _dict):
                 latt.edge_dict[edge].set_color(ic)
 
         ''' Edges from leaves to infimum '''
         for leaf in leaves:
             _dict = nodes[node]
+            # Activate
             if any(el in to_activate for el in _dict):
                 latt.edge_dict[(leaf,None)].set_color(dc)
+                print('Activating leaf edge; node dict: ', _dict)
+            # Deactivate
             elif any(el in to_deactivate for el in _dict):
                 latt.edge_dict[(leaf,None)].set_color(ic)
+                print('Deactivating leaf edge; node dict: ', _dict)
 
 
 
@@ -1820,7 +1846,7 @@ class StepParse(nx.DiGraph):
 
             ''' HR 01/11/21 Workaround for problem of multiple apostropges being reduced to single one in OCC
                 Address unresolved OCC bug 32421: https://tracker.dev.opencascade.org/view.php?id=32421
-                Possibly fixed via 32310: https://tracker.dev.opencascade.org/view.php?id=32310 
+                Possibly fixed via 32310: https://tracker.dev.opencascade.org/view.php?id=32310
                 but needs testing here after updating PythonOCC '''
             while "''" in name:
                 name = name.replace("''", "'")
