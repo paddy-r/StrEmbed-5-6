@@ -1513,6 +1513,7 @@ class MainWindow(wx.Frame):
         if self.veto or (previous_selections == new_selections):
             print('Vetoing tree selection change')
             event.Veto()
+            self.veto = False
             return
 
         print('Tree item selected, updating selector, lattice and 3D views...')
