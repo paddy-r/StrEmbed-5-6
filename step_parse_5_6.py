@@ -1167,7 +1167,10 @@ class AssemblyManager():
                 elif (_p1 == None) != (_p2 == None):
                     c = C2
                 else:
-                    c = self.similarity(a1.nodes[_p1][field], a2.nodes[_p2][field])[1]
+                    try:
+                        c = self.similarity(a1.nodes[_p1][field], a2.nodes[_p2][field])[1]
+                    except:
+                        c = 0
                 _sim_parent[n1][n2] = c
 
 
@@ -1501,14 +1504,14 @@ class AssemblyManager():
                 # if ((u in selected) or (u in to_select)) and (u,v) in active_edges:
                 # if (u in to_unselect):
                 # if (u not in selected) or (u not in to_select):
-                if (u not in selected) and (u not in to_select) and (u,v) in active_edges:
+                if ((u not in selected) or (u not in to_select)) and (u,v) in active_edges:
                     latt.edge_dict[(u,v)].set_color(dc)
             for u,v in latt.out_edges(node):
                 # if (u in selected) or (u in to_select):
                 # if ((v in selected) or (v in to_select)) and (u,v) in active_edges:
                 # if (v in to_unselect):
                 # if (v not in selected) or (v not in to_select):
-                if (v not in selected) and (v not in to_select) and (u,v) in active_edges:
+                if ((v not in selected) or (v not in to_select)) and (u,v) in active_edges:
                     latt.edge_dict[(u,v)].set_color(dc)
 
         ''' Edges from leaves to infimum '''
