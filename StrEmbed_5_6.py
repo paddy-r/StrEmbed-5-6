@@ -426,7 +426,7 @@ class MainWindow(wx.Frame):
         self._highlight_colour = wx.RED
         self.LATTICE_PLOT_MODE_DEFAULT = True
         self.COMMON_SELECTOR_VIEW = True
-        self.SELECT_ALL_DESCENDANTS = False
+        self.SELECT_ALL_DESCENDANTS = True
 
         self.origin = (0,0)
         self.click_pos = None
@@ -1496,7 +1496,7 @@ class MainWindow(wx.Frame):
         if self.SELECT_ALL_DESCENDANTS:
             tree = self._page.partTree_ctc
             tree_item = event.GetItem()
-            # tree.SelectAllChildren(tree_item)
+            tree.SelectAllChildren(tree_item)
             new_selections_copy = [el for el in new_selections]
             for node in new_selections_copy:
                 new_selections.extend(nx.descendants(self.assembly, node))

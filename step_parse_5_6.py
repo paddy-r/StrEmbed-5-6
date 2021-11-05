@@ -1498,14 +1498,17 @@ class AssemblyManager():
             ''' Edges '''
             for u,v in latt.in_edges(node):
                 # if (u in selected) or (u in to_select):
-                if ((u in selected) or (u in to_select)) and (u,v) in active_edges:
+                # if ((u in selected) or (u in to_select)) and (u,v) in active_edges:
                 # if (u in to_unselect):
                 # if (u not in selected) or (u not in to_select):
+                if (u not in selected) and (u not in to_select) and (u,v) in active_edges:
                     latt.edge_dict[(u,v)].set_color(dc)
             for u,v in latt.out_edges(node):
-                if ((v in selected) or (v in to_select)) and (u,v) in active_edges:
+                # if (u in selected) or (u in to_select):
+                # if ((v in selected) or (v in to_select)) and (u,v) in active_edges:
                 # if (v in to_unselect):
-                # if (v not in selected) or (v in to_select):
+                # if (v not in selected) or (v not in to_select):
+                if (v not in selected) and (v not in to_select) and (u,v) in active_edges:
                     latt.edge_dict[(u,v)].set_color(dc)
 
         ''' Edges from leaves to infimum '''
