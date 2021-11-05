@@ -1227,12 +1227,12 @@ class AssemblyManager():
 
         _map = {}
 
-        _values = set([a1.nodes[el][_field] for el in a1.nodes])
+        _values = set([a1.nodes[el][_field] for el in a1.nodes if _field in a1.nodes[el]])
         _field_dict = {}
 
         for el in _values:
-            _n1 = [_el for _el in a1.nodes if a1.nodes[_el][_field] == el]
-            _n2 = [_el for _el in a2.nodes if a2.nodes[_el][_field] == el]
+            _n1 = [_el for _el in a1.nodes if _field in a1.nodes[_el] and a1.nodes[_el][_field] == el]
+            _n2 = [_el for _el in a2.nodes if _field in a2.nodes[_el] and a2.nodes[_el][_field] == el]
             if _n1 and _n2:
                 if len(_n1) == 1 and len(_n2) == 1:
                     ''' If single-value mapping, then map... '''

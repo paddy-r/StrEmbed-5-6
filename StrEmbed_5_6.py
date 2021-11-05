@@ -1111,7 +1111,9 @@ class MainWindow(wx.Frame):
             ''' Inverse dict look-up '''
             # item = [k for k,v in self.assembly.OCC_dict.items() if v == shape][-1]
             ''' HR 19/05/12 New version to look in node dicts for shape '''
-            item = [node for node in self.assembly.nodes if self.assembly.nodes[node]['shape_loc'][0] == shape][-1]
+            # item = [node for node in self.assembly.nodes if self.assembly.nodes[node]['shape_loc'][0] == shape][-1]
+            ''' HR 05/11/21 Updated to account for empty shape field (e.g. for user-created sub-assemblies) '''
+            item = [node for node in self.assembly.nodes if 'shape_loc' in self.assembly.nodes[node] and self.assembly.nodes[node]['shape_loc'][0] == shape][-1]
             to_select.append(item)
             print(item)
 
