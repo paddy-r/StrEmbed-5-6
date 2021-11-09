@@ -393,6 +393,35 @@ class NotebookPanel(wx.Panel):
 
 
 
+''' HR 13/10/21
+    Dialog box for node data entry '''
+class DataEntryDialog(wx.Dialog):
+    def __init__(self, parent):
+        wx.Dialog.__init__(self, parent, wx.ID_ANY, "Node data entry", size= (400,180))
+        self.panel = wx.Panel(self,wx.ID_ANY)
+
+        self.lblfield = wx.StaticText(self.panel, label = "Field name:", pos = (20,20))
+        self.field = wx.TextCtrl(self.panel, value = "", pos = (110,20), size = (250,-1))
+        self.lblvalue = wx.StaticText(self.panel, label = "Value:", pos = (20,60))
+        self.value = wx.TextCtrl(self.panel, value = "", pos = (110,60), size = (250,-1))
+        self.okButton = wx.Button(self.panel, label = "OK", pos = (110,100))
+        self.closeButton = wx.Button(self.panel, label = "Cancel", pos = (210,100))
+        self.okButton.Bind(wx.EVT_BUTTON, self.OnOK)
+        self.closeButton.Bind(wx.EVT_BUTTON, self.OnQuit)
+        self.Bind(wx.EVT_CLOSE, self.OnQuit)
+        self.Show()
+
+    def OnQuit(self, event):
+        self.result_field = None
+        self.Destroy()
+
+    def OnOK(self, event):
+        self.result_field = self.field.GetValue()
+        self.result_value = self.value.GetValue()
+        self.Destroy()
+
+
+
 class MainWindow(wx.Frame):
     def __init__(self):
 
@@ -1137,7 +1166,12 @@ class MainWindow(wx.Frame):
             firing for each part selected '''
         print('Updating parts view...')
         # self.veto = True
+        # self._page.partTree_ctc.UnselectAll()
+        # for item in to_select:
+        #     self.UpdateListSelections(item)
+        # self.veto = False
 
+        ''' HR Nov 21: Switch added here to avoid multiple methods firing '''
         self.parts_list_done = True
         self._page.partTree_ctc.UnselectAll()
         self.parts_list_done = False
@@ -1146,7 +1180,6 @@ class MainWindow(wx.Frame):
             self.parts_list_done = True
             self.UpdateListSelections(item)
             self.parts_list_done = False
-        # self.veto = False
 
         ''' Update other views '''
         self.UpdateToggledImages()
@@ -1248,14 +1281,13 @@ class MainWindow(wx.Frame):
         ''' Create all guide lines, nodes and edges '''
         self._assembly_manager.create_plot_elements()
         ''' ...then update active assembly... '''
-        active = self.assembly.assembly_id
-        selected_items = []
-        to_select = []
-        to_unselect = self.assembly.leaves
-
         self._assembly_manager.update_colours_active(to_activate = [_id])
-        # self._assembly_manager.update_colours_selected(active, selected = selected_items, to_select = to_select, to_unselect = to_unselect)
-        self._assembly_manager.update_colours_selected(active, selected = selected_items, to_select = to_select, called_by = "DisplayLattice")
+
+        # active = self.assembly.assembly_id
+        # selected_items = []
+        # to_select = []
+        # # self._assembly_manager.update_colours_selected(active, selected = selected_items, to_select = to_select, to_unselect = to_unselect)
+        # self._assembly_manager.update_colours_selected(active, selected = selected_items, to_select = to_select, called_by = "DisplayLattice")
 
         print('Finished "DisplayLattice"')
         self.DoDraw('DisplayLattice')
@@ -1428,6 +1460,8 @@ class MainWindow(wx.Frame):
         and for sub-shapes; also images are held in memory, not saved,
         to avoid temporary folder(s) being created '''
     def TreeItemChecked(self, event):
+
+        ''' Get checked item and search for corresponding image '''
         item = event.GetItem()
         node = self._page.ctc_dict_inv[item]
 
@@ -1490,7 +1524,9 @@ class MainWindow(wx.Frame):
         previous_selections = self.selected_items
         print('Items selected before change in tree selections:', previous_selections)
         wx.CallAfter(self.TreeItemSelected, previous_selections, event)
+        # event.Skip()
 
+        ''' HR Nov 21: Switch to avoid multiple firings '''
         if self.parts_list_done:
             print('Vetoing tree selection event as called, not triggered in parts view')
             event.Veto()
@@ -1526,6 +1562,7 @@ class MainWindow(wx.Frame):
         as would redo for every selected item...
         or if new selections are same as previous
         '''
+        # new_selections = self.selected_items
         # if self.veto or (previous_selections == new_selections):
             # print('Vetoing tree selection change')
             # event.Veto()
@@ -1544,6 +1581,7 @@ class MainWindow(wx.Frame):
 
         print('Image toggled')
         node = self._page.button_dict_inv[event.GetEventObject()]
+        # self.UpdateListSelections(node)
 
         self.parts_list_done = True
         self.UpdateListSelections(node)
@@ -2410,9 +2448,6 @@ class MainWindow(wx.Frame):
         self._page = _page
         print('Assembly ID: ', _id)
 
-        to_select = self.selected_items
-        to_unselect = [el for el in self.assembly.nodes if el not in to_select]
-
         ''' Switch to activated assembly in lattive view '''
         if not self._page.file_open:
             self.DisplayLattice(called_by = 'OnNotebookPageChanged')
@@ -2421,6 +2456,8 @@ class MainWindow(wx.Frame):
                 to_deactivate = []
             else:
                 to_deactivate = [_id_old]
+            to_select = self.selected_items
+
             self._assembly_manager.update_colours_active(to_activate = [_id], to_deactivate = to_deactivate)
             # self._assembly_manager.update_colours_selected(_id, to_select = to_select, to_unselect = to_unselect)
             self._assembly_manager.update_colours_selected(_id, to_select = to_select, called_by = "OnNBPageChanged")

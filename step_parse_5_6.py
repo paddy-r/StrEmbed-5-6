@@ -2366,6 +2366,7 @@ class StepParse(nx.DiGraph):
             leaves_in[leaf] = {leaf}
 
         for sub in subassemblies:
+            # print('sub = ', sub)
             leaves_in[sub] = nx.descendants(self, sub) - subassemblies
 
         return leaves_in
