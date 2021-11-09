@@ -422,6 +422,7 @@ class MainWindow(wx.Frame):
         self._default_size = (30,30)
         self._button_size = (50,50)
         self.veto = False
+        self.parts_list_done = False
 
         self._highlight_colour = wx.RED
         self.LATTICE_PLOT_MODE_DEFAULT = True
@@ -1135,11 +1136,17 @@ class MainWindow(wx.Frame):
             Use of veto is workaround to avoid ctc.EVT_TREE_SEL_CHANGED event...
             firing for each part selected '''
         print('Updating parts view...')
-        self.veto = True
+        # self.veto = True
+
+        self.parts_list_done = True
         self._page.partTree_ctc.UnselectAll()
+        self.parts_list_done = False
+
         for item in to_select:
+            self.parts_list_done = True
             self.UpdateListSelections(item)
-        self.veto = False
+            self.parts_list_done = False
+        # self.veto = False
 
         ''' Update other views '''
         self.UpdateToggledImages()
@@ -1248,7 +1255,7 @@ class MainWindow(wx.Frame):
 
         self._assembly_manager.update_colours_active(to_activate = [_id])
         # self._assembly_manager.update_colours_selected(active, selected = selected_items, to_select = to_select, to_unselect = to_unselect)
-        self._assembly_manager.update_colours_selected(active, selected = selected_items, to_select = to_select)
+        self._assembly_manager.update_colours_selected(active, selected = selected_items, to_select = to_select, called_by = "DisplayLattice")
 
         print('Finished "DisplayLattice"')
         self.DoDraw('DisplayLattice')
@@ -1469,7 +1476,7 @@ class MainWindow(wx.Frame):
                 ''' Remove button from slct_panel '''
                 button = self._page.button_dict[node]
                 button.Destroy()
-    
+
                 ''' Update global list and dict '''
                 self._page.button_dict.pop(node)
                 self._page.button_dict_inv.pop(button)
@@ -1483,7 +1490,13 @@ class MainWindow(wx.Frame):
         previous_selections = self.selected_items
         print('Items selected before change in tree selections:', previous_selections)
         wx.CallAfter(self.TreeItemSelected, previous_selections, event)
-        event.Skip()
+
+        if self.parts_list_done:
+            print('Vetoing tree selection event as called, not triggered in parts view')
+            event.Veto()
+        else:
+            print('Skipping (forwarding) tree selection event')
+            event.Skip()
 
 
 
@@ -1496,7 +1509,11 @@ class MainWindow(wx.Frame):
         if self.SELECT_ALL_DESCENDANTS:
             tree = self._page.partTree_ctc
             tree_item = event.GetItem()
+
+            self.part_list_done = True
             tree.SelectAllChildren(tree_item)
+            self.part_list_done = False
+
             new_selections_copy = [el for el in new_selections]
             for node in new_selections_copy:
                 new_selections.extend(nx.descendants(self.assembly, node))
@@ -1509,11 +1526,11 @@ class MainWindow(wx.Frame):
         as would redo for every selected item...
         or if new selections are same as previous
         '''
-        if self.veto or (previous_selections == new_selections):
-            print('Vetoing tree selection change')
-            event.Veto()
-            self.veto = False
-            return
+        # if self.veto or (previous_selections == new_selections):
+            # print('Vetoing tree selection change')
+            # event.Veto()
+            # self.veto = False
+            # return
 
         print('Tree item selected, updating selector, lattice and 3D views...')
         ''' Update images and lattice view '''
@@ -1527,7 +1544,10 @@ class MainWindow(wx.Frame):
 
         print('Image toggled')
         node = self._page.button_dict_inv[event.GetEventObject()]
+
+        self.parts_list_done = True
         self.UpdateListSelections(node)
+        self.parts_list_done = False
 
 
 
@@ -1678,27 +1698,31 @@ class MainWindow(wx.Frame):
                 to_select = [node]
                 to_unselect = []
 
-            self._assembly_manager.update_colours_selected(active, selected = selected_items, to_select = to_select, to_unselect = to_unselect)
+            self._assembly_manager.update_colours_selected(active, selected = selected_items, to_select = to_select, to_unselect = to_unselect, called_by = "OnLatticeMouseRelease")
             # self._assembly_manager.update_colours_selected(active, selected = selected_items, to_select = to_select)
 
             self.DoDraw('OnLatticeMouseRelease')
 
             ''' Update items in parts list using assembly node ID '''
+            self.parts_list_done = True
             self.UpdateListSelections(node)
+            self.parts_list_done = False
 
 
 
     def UpdateSelectedNodes(self, called_by = None):
 
-        if called_by:
-            print('UpdateSelectedNodes called by', called_by)
+        # if called_by:
+        #     print('UpdateSelectedNodes called by', called_by)
+
+        print('UpdateSelectedNodes called by', called_by)
 
         _id = self.assembly.assembly_id
         to_select = self.selected_items
         # to_unselect = [el for el in self.assembly.nodes if el not in to_select]
 
         # self._assembly_manager.update_colours_selected(_id, selected = [], to_select = to_select, to_unselect = to_unselect)
-        self._assembly_manager.update_colours_selected(_id, selected = [], to_select = to_select)
+        self._assembly_manager.update_colours_selected(_id, selected = [], to_select = to_select, called_by = "UpdateSelectedNodes")
 
         self.DoDraw('UpdateSelectedNodes')
 
@@ -2399,7 +2423,7 @@ class MainWindow(wx.Frame):
                 to_deactivate = [_id_old]
             self._assembly_manager.update_colours_active(to_activate = [_id], to_deactivate = to_deactivate)
             # self._assembly_manager.update_colours_selected(_id, to_select = to_select, to_unselect = to_unselect)
-            self._assembly_manager.update_colours_selected(_id, to_select = to_select)
+            self._assembly_manager.update_colours_selected(_id, to_select = to_select, called_by = "OnNBPageChanged")
             self.DoDraw(called_by = 'OnNotebookPageChanged')
 
 

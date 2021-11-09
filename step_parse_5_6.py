@@ -1449,9 +1449,10 @@ class AssemblyManager():
 
 
 
-    def update_colours_selected(self, active, selected = [], to_select = [], to_unselect = []):
+    def update_colours_selected(self, active, selected = [], to_select = [], to_unselect = [], called_by = None):
 
         print('Running "update_colours_selected"')
+        print('Called by: ', called_by)
 
         ''' Get active elements '''
         active_nodes = [node for node in self._lattice.nodes if active in self._lattice.nodes[node]]
