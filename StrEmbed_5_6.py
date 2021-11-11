@@ -456,7 +456,7 @@ class MainWindow(wx.Frame):
         self._highlight_colour = wx.RED
         self.LATTICE_PLOT_MODE_DEFAULT = True
         self.COMMON_SELECTOR_VIEW = True
-        self.SELECT_ALL_DESCENDANTS = True
+        self.SELECT_ALL_DESCENDANTS = False
 
         self.origin = (0,0)
         self.click_pos = None
@@ -1182,9 +1182,9 @@ class MainWindow(wx.Frame):
             self.parts_list_done = False
 
         ''' Update other views '''
-        self.UpdateToggledImages()
-        self.UpdateSelectedNodes(called_by = 'OnLeftUp_3D')
-        self.Update3DView()
+        # self.UpdateToggledImages()
+        # self.UpdateSelectedNodes(called_by = 'OnLeftUp_3D')
+        # self.Update3DView()
 
         self.Thaw()
 
@@ -1283,11 +1283,11 @@ class MainWindow(wx.Frame):
         ''' ...then update active assembly... '''
         self._assembly_manager.update_colours_active(to_activate = [_id])
 
-        # active = self.assembly.assembly_id
-        # selected_items = []
-        # to_select = []
-        # # self._assembly_manager.update_colours_selected(active, selected = selected_items, to_select = to_select, to_unselect = to_unselect)
-        # self._assembly_manager.update_colours_selected(active, selected = selected_items, to_select = to_select, called_by = "DisplayLattice")
+        active = self.assembly.assembly_id
+        selected_items = []
+        to_select = []
+        # self._assembly_manager.update_colours_selected(active, selected = selected_items, to_select = to_select, to_unselect = to_unselect)
+        self._assembly_manager.update_colours_selected(active, selected = selected_items, to_select = to_select, called_by = "DisplayLattice")
 
         print('Finished "DisplayLattice"')
         self.DoDraw('DisplayLattice')
@@ -1524,15 +1524,15 @@ class MainWindow(wx.Frame):
         previous_selections = self.selected_items
         print('Items selected before change in tree selections:', previous_selections)
         wx.CallAfter(self.TreeItemSelected, previous_selections, event)
-        # event.Skip()
+        event.Skip()
 
-        ''' HR Nov 21: Switch to avoid multiple firings '''
-        if self.parts_list_done:
-            print('Vetoing tree selection event as called, not triggered in parts view')
-            event.Veto()
-        else:
-            print('Skipping (forwarding) tree selection event')
-            event.Skip()
+        # ''' HR Nov 21: Switch to avoid multiple firings '''
+        # if self.parts_list_done:
+        #     print('Vetoing tree selection event as called, not triggered in parts view')
+        #     event.Veto()
+        # else:
+        #     print('Skipping (forwarding) tree selection event')
+        #     event.Skip()
 
 
 
@@ -1736,10 +1736,10 @@ class MainWindow(wx.Frame):
                 to_select = [node]
                 to_unselect = []
 
-            self._assembly_manager.update_colours_selected(active, selected = selected_items, to_select = to_select, to_unselect = to_unselect, called_by = "OnLatticeMouseRelease")
+            # self._assembly_manager.update_colours_selected(active, selected = selected_items, to_select = to_select, to_unselect = to_unselect, called_by = "OnLatticeMouseRelease")
             # self._assembly_manager.update_colours_selected(active, selected = selected_items, to_select = to_select)
 
-            self.DoDraw('OnLatticeMouseRelease')
+            # self.DoDraw('OnLatticeMouseRelease')
 
             ''' Update items in parts list using assembly node ID '''
             self.parts_list_done = True
