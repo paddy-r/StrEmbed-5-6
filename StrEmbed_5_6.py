@@ -1737,7 +1737,7 @@ class MainWindow(wx.Frame):
                 to_unselect = []
 
             # self._assembly_manager.update_colours_selected(active, selected = selected_items, to_select = to_select, to_unselect = to_unselect, called_by = "OnLatticeMouseRelease")
-            # self._assembly_manager.update_colours_selected(active, selected = selected_items, to_select = to_select)
+            # # self._assembly_manager.update_colours_selected(active, selected = selected_items, to_select = to_select)
 
             # self.DoDraw('OnLatticeMouseRelease')
 
